@@ -1,0 +1,15 @@
+# Environments
+.env
+
+# Model weights
+*.pt
+
+# Outputs and large video files
+outputs/
+
+# Data and input videos
+data/
+
+# Python cache
+__pycache__/
+*.pyc

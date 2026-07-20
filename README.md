@@ -1,117 +1,139 @@
-# AI Evidence Gap Reconstruction
+# AI-Inferred Evidence Visualization
 
-Local pipeline for reconstructing a randomly missing quarter of every video in `data/input`.
+Local pipeline for replacing a distributed 25% of each input video with evidence-grounded, stylized Blender forensic-3D inference views. The former 2.5D compositor remains available as an explicit compatibility fallback.
 
-## Goal
+## Product Contract
 
-Given a full video, the system should:
+For every video in `data/input`, the pipeline:
 
-1. Split the video into 4 equal time chunks.
-2. Randomly hide 1 chunk on every run.
-3. Keep the other 3 chunks as evidence footage, but overlay live YOLO classification boxes.
-4. Analyze the visible 75% to understand the scene.
-5. Reconstruct the missing 25% as an animated 3D-style inference view.
-6. Write one reconstructed full-length video per input video.
+1. Randomly selects multiple non-overlapping gaps.
+2. Keeps every gap between 1 and 3 seconds.
+3. Makes the combined hidden duration approximately 25% of the full video.
+4. Keeps the remaining 75% as visible evidence with live YOLO classifications.
+5. Tracks people, vehicles, bags, and relevant objects through the visible ranges.
+6. Reconstructs each short gap from evidence immediately before and after it.
+7. Stitches the original timeline back together at its original duration.
+8. Evaluates the completed reconstructions against hidden ground truth afterward.
 
-This is not meant to be a random skeleton overlay or pasted ghost footage. The visible chunks should show live YOLO bounding boxes and class labels. The missing chunk should switch into an animated 3D reconstruction view driven by evidence gathered from the visible chunks: people, vehicles, bags, carried objects, movement direction, object continuity, likely paths, and scene layout.
+The generated portions are explicitly labeled **AI-inferred evidence visualization — not ground truth**.
 
-## Expected Output
+## Reconstruction Style
 
-If `data/input` contains:
+The default hidden-gap renderer uses headless Blender 4.5 LTS:
 
-```text
-input_vid3.mp4
-input_vid4.mp4
-```
+- perspective-matched forensic ground and city-street proxy geometry
+- procedural articulated people and simplified vehicles
+- global per-track body proportions and evidence-derived clothing colors
+- forward-predicted three-waypoint paths; post-gap positions remain soft residuals
+- confidence-based solid, translucent, or simplified silhouette fidelity
+- evidence inset, calibration confidence, uncertainty rings, and explicit non-ground-truth labeling
+- short dark forensic shutters between visible evidence and inferred 3D
 
-then `python run.py` should produce:
+The UI defaults to `Blender Forensic 3D`; `Fast 2.5D fallback` must be selected explicitly. Blender failures stop a Blender job and never silently substitute 2.5D output.
 
-```text
-outputs/input_vid3_reconstructed.mp4
-outputs/input_vid4_reconstructed.mp4
-```
-
-Intermediate files belong under:
-
-```text
-outputs/_work/<video_name>/
-```
-
-## Target Pipeline
-
-The intended architecture is:
-
-1. `run.py` finds every video in `data/input`.
-2. Each video is split into 4 equal chunks.
-3. One chunk is randomly selected as the hidden/missing evidence.
-4. The other 3 chunks are passed through scene analysis and rendered with live YOLO boxes.
-5. YOLOv8m detects people, cars, bikes, bags, backpacks, handbags, suitcases, and other relevant objects.
-6. Tracking links detections across visible chunks.
-7. The system writes an intelligence report:
-   - how many people are visible
-   - what objects they carry or interact with
-   - vehicle/object presence
-   - direction of movement
-   - approximate paths before and after the gap
-   - what likely happened during the missing chunk
-8. The missing chunk is reconstructed as an animated 3D inference scene using those clues.
-9. The final video shows YOLO-annotated evidence chunks plus the 3D missing-chunk reconstruction.
-
-## Current Status
-
-The active pipeline is scene-intelligence-first:
-
-- model candidates are configured in `config/reconstruction_config.json`
-- multiple object classes are analyzed, not only one person
-- important entities are tracked across the visible 75%
-- motion direction is inferred from tracks
-- a structured reconstruction plan is written before rendering
-- the hidden chunk is rendered as an animated 3D reconstruction view
-
-## Run
-
-```bash
-python run.py
-```
-
-## YOLO Config
-
-Inference settings live in:
+## Output
 
 ```text
-config/reconstruction_config.json
+outputs/jobs/<job_id>/<video_name>_reconstructed.mp4
+outputs/jobs/<job_id>/job.json
+outputs/jobs/<job_id>/_work/<video_name>/gap_selection.json
+outputs/jobs/<job_id>/_work/<video_name>/detections.json
+outputs/jobs/<job_id>/_work/<video_name>/scene_report.json
+outputs/jobs/<job_id>/_work/<video_name>/entity_registry.json
+outputs/jobs/<job_id>/_work/<video_name>/camera_motion_report.json
+outputs/jobs/<job_id>/_work/<video_name>/reconstruction_plans_v2.json
+outputs/jobs/<job_id>/_work/<video_name>/gaps/gap_XX/blender/plan_v2.json
+outputs/jobs/<job_id>/_work/<video_name>/gaps/gap_XX/blender/scene.blend
+outputs/jobs/<job_id>/_work/<video_name>/gaps/gap_XX/blender/gap_blender.mp4
+outputs/jobs/<job_id>/_work/<video_name>/gaps/gap_XX/blender/render_report.json
+outputs/jobs/<job_id>/_work/<video_name>/accuracy_report.json
 ```
 
-Current defaults:
+Hidden ground-truth segment files are not created during preparation. They are materialized only after every inferred gap has rendered, then used for evaluation. They are never passed to detection, tracking, planning, appearance sampling, camera estimation, or Blender.
 
-```json
-{
-  "model": "yolo26m.pt",
-  "frame_stride": 8,
-  "downscale_width": 960,
-  "confidence": 0.3
-}
-```
+## Local Interface
 
-There is one active model in the config. Change it to `yolo11m.pt` or `yolov8m.pt` only if you want to test another model.
-
-All 80 COCO classes are enabled in the config, including people, vehicles, bags, cup, bottle, knife, and cell phone. These are deliberately included for the future statement feature.
-
-Confidence must be between `0` and `1`. If you write `3`, the runner treats it as `3%` and converts it to `0.03`.
-
-Useful options:
-
-```bash
-python run.py --seed 123
-python run.py --config config/reconstruction_config.json
-```
-
-The statement feature is not active yet. The next version should parse statements like "red shirt", "phone in hand", or "knife in other hand" and use those details to alter the 3D reconstruction plan.
-
-## Setup
+Prerequisites on this workstation are Python 3.12, Blender 4.5 LTS, and FFmpeg 8.1. The Python dependencies remain listed in `requirements.txt`.
 
 ```bash
 pip install -r requirements.txt
+python app.py
 ```
 
-Lower-resolution input videos are preferred while developing. 720p is a good target because object detection, tracking, and rendering are much faster and more stable than 4K.
+The interface opens at `http://127.0.0.1:8000` and provides:
+
+- browse and drag-and-drop upload for common video formats
+- a persisted one-at-a-time processing queue
+- live reconstruction stage, progress, elapsed time, and best-effort ETA
+- in-browser playback and download for new jobs and existing reconstructed outputs
+- confirmed deletion of the output, work directory, and retained upload
+- persistent dark/light theme toggle in the top-right navigation
+- selectable Blender forensic-3D or explicit 2.5D fallback rendering
+
+Useful server options:
+
+```bash
+python app.py --host 127.0.0.1 --port 8000
+python app.py --no-browser
+```
+
+The UI uses only Python's standard-library HTTP server and vanilla HTML, CSS, and JavaScript. No web framework or extra runtime dependency is required.
+
+## Project Structure
+
+```text
+app.py                              Local UI entrypoint
+src/application/                    Pipeline and processing-job orchestration
+src/domain/                         Validated configuration, job, and upload policies
+src/interfaces/http/                Local HTTP API and static-file boundary
+src/infrastructure/                 Blender, visible-frame, camera-motion, and FFmpeg adapters
+blender/                            JSON-only procedural scene, animation, HUD, and render scripts
+src/*.py                            Existing detection, inference, rendering, and evaluation capabilities
+web/index.html                      Accessible application shell
+web/assets/styles/                  Professional dark/cyan visual system
+web/assets/scripts/                 Typed API client, formatters, and UI controller
+tests/unit/                         Layered domain, application, and interface tests
+tests/test_*.py                     Existing reconstruction behavior tests
+```
+
+New modules follow the engineering standards in `rules.md`: explicit types, validated boundaries, named policy constants, focused functions, and files below the 500-line source budget.
+
+## Configuration
+
+The primary settings are in `config/reconstruction_config.json`:
+
+```json
+{
+  "gap": {
+    "missing_fraction": 0.25,
+    "min_seconds": 1.0,
+    "max_seconds": 3.0,
+    "context_seconds": 2.0
+  },
+  "renderer": {
+    "default_mode": "blender",
+    "blender_version": "4.5 LTS",
+    "production_scale_percent": 100
+  }
+}
+```
+
+YOLO uses sequential BoT-SORT tracking with camera-motion compensation. The scene-intelligence stage performs dependency-free appearance matching across gaps. Tracker configuration lives in `config/botsort_reid.yaml`. Confidence values must be between `0` and `1`; values greater than `1` are interpreted as percentages.
+
+No OpenAI API key is used by the current deterministic reconstruction pipeline.
+
+## Evaluation
+
+Only after every missing gap has been rendered, the evaluator reads hidden ground truth and reports:
+
+- SSIM and PSNR
+- entry and exit boundary similarity
+- object-count consistency
+- person-count consistency
+- normalized object-center error
+
+Run the unit tests with:
+
+```bash
+python -m unittest discover -s tests -v
+```

@@ -4,6 +4,7 @@
     "frame_stride": 8,
     "downscale_width": 960,
     "confidence": 0.3,
+    "tracker_config": "config/botsort_reid.yaml",
     "classes": {
       "0": "person",
       "1": "bicycle",
@@ -87,19 +88,34 @@
       "79": "toothbrush"
     }
   },
+  "gap": {
+    "missing_fraction": 0.25,
+    "min_seconds": 1.0,
+    "max_seconds": 3.0,
+    "context_seconds": 2.0
+  },
   "scene": {
-    "max_render_entities": 10,
-    "min_track_frames": 3,
+    "max_render_entities": 12,
+    "min_track_frames": 2,
     "track_interpolation_max_gap_multiplier": 4
   },
   "visualization": {
     "visible_box_thickness": 2,
     "visible_max_tracks": 32,
-    "reconstruction_camera": "evidence_3d",
-    "motion_smoothing": 0.55,
-    "trail_length": 24,
-    "entity_speed_boost": 1.35,
-    "show_progress_bar": false,
-    "hud_opacity": 0.42
+    "plate_window_seconds": 0.75,
+    "plate_detection_max_gap_frames": 16,
+    "transition_seconds": 0.18,
+    "show_uncertainty_paths": true,
+    "hud_opacity": 0.46
+  },
+  "evaluation": {
+    "enabled": true,
+    "frame_stride": 12
+  },
+  "renderer": {
+    "default_mode": "blender",
+    "blender_version": "4.5 LTS",
+    "preview_scale_percent": 75,
+    "production_scale_percent": 100
   }
 }

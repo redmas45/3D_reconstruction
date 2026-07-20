@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Local AI-inferred forensic video reconstruction interface">
+  <title>Reconstruct — Forensic Video Lab</title>
+  <link rel="icon" href="/assets/icons/favicon.svg" type="image/svg+xml">
+  <script src="/assets/scripts/theme-bootstrap.js"></script>
+  <link rel="stylesheet" href="/assets/styles/app.css">
+  <script src="/assets/scripts/app.js" type="module"></script>
+</head>
+<body>
+  <header class="site-header">
+    <a class="brand" href="/" aria-label="Reconstruct home">
+      <span class="brand-mark" aria-hidden="true">
+        <span></span><span></span><span></span>
+      </span>
+      <span>RECONSTRUCT</span>
+    </a>
+    <div class="header-actions">
+      <button class="theme-toggle" id="theme-toggle" type="button" aria-label="Switch to light theme" title="Switch to light theme">
+        <span class="theme-icon theme-sun" aria-hidden="true">☀</span>
+        <span class="theme-icon theme-moon" aria-hidden="true">☾</span>
+      </button>
+      <div class="system-status" id="system-status">
+        <span class="status-dot"></span>
+        <span>Local engine</span>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <section class="hero">
+      <div class="hero-copy">
+        <p class="eyebrow">AI-INFERRED EVIDENCE VISUALIZATION</p>
+        <h1>Turn missing moments into an explainable reconstruction.</h1>
+        <p class="hero-description">Upload a video and follow each evidence, tracking, inference, and rendering stage from one local workspace.</p>
+      </div>
+      <div class="contract-card" aria-label="Reconstruction contract">
+        <div class="contract-icon" aria-hidden="true">25%</div>
+        <div>
+          <strong>Distributed evidence gaps</strong>
+          <span>Multiple 1–3 second intervals, totaling approximately 25%.</span>
+        </div>
+      </div>
+    </section>
+
+    <section class="workspace-grid" aria-label="New reconstruction">
+      <article class="panel upload-panel">
+        <div class="panel-heading">
+          <div>
+            <p class="section-number">01</p>
+            <h2>Select evidence video</h2>
+          </div>
+          <span class="local-badge">Processed locally</span>
+        </div>
+
+        <label class="drop-zone" id="drop-zone" for="video-input">
+          <input id="video-input" type="file" accept=".mp4,.mov,.avi,.mkv,.m4v,.webm,.mpeg,.mpg,.wmv,video/*">
+          <span class="upload-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24"><path d="M12 16V4m0 0 4 4m-4-4L8 8M4 15v4a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-4"/></svg>
+          </span>
+          <strong>Drop a video here</strong>
+          <span>or click to browse your device</span>
+          <small>MP4, MOV, AVI, MKV, M4V, WebM, MPEG, MPG or WMV</small>
+        </label>
+
+        <div class="selected-file hidden" id="selected-file">
+          <span class="file-type" id="file-type">MP4</span>
+          <div class="file-copy">
+            <strong id="file-name"></strong>
+            <span id="file-size"></span>
+          </div>
+          <button class="icon-button" id="clear-file" type="button" aria-label="Clear selected video">×</button>
+        </div>
+
+        <div class="upload-progress hidden" id="upload-progress">
+          <div class="progress-meta">
+            <span>Uploading video</span>
+            <strong id="upload-percentage">0%</strong>
+          </div>
+          <div class="progress-track"><span id="upload-bar"></span></div>
+        </div>
+
+        <label class="renderer-select" for="renderer-mode">
+          <span>
+            <strong>Rendering mode</strong>
+            <small>Choose quality or the fast compatibility renderer.</small>
+          </span>
+          <select id="renderer-mode">
+            <option value="blender" selected>Blender Forensic 3D</option>
+            <option value="2d">Fast 2.5D fallback</option>
+          </select>
+        </label>
+
+        <button class="primary-button" id="start-button" type="button" disabled>
+          <span>Start reconstruction</span>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 18 6-6-6-6"/></svg>
+        </button>
+        <p class="privacy-note">Your source video and generated files stay on this computer.</p>
+      </article>
+
+      <article class="panel process-visual" aria-label="Reconstruction process visualization">
+        <div class="visual-header">
+          <span>RECONSTRUCTION ENGINE</span>
+          <span class="live-indicator"><i></i> READY</span>
+        </div>
+        <div class="scene-orbit" aria-hidden="true">
+          <div class="scan-grid"></div>
+          <div class="orbit orbit-one"></div>
+          <div class="orbit orbit-two"></div>
+          <div class="core-cube"><span></span></div>
+          <div class="scan-line"></div>
+        </div>
+        <div class="visual-footer">
+          <div><span>Evidence</span><strong>Boundary frames</strong></div>
+          <div><span>Inference</span><strong>Confidence visible</strong></div>
+          <div><span>Output</span><strong>Forensic 3D</strong></div>
+        </div>
+      </article>
+    </section>
+
+    <section class="section-block" aria-labelledby="processing-title">
+      <div class="section-heading">
+        <div>
+          <p class="section-number">02</p>
+          <h2 id="processing-title">Processing queue</h2>
+        </div>
+        <span class="section-note">One intensive job runs at a time</span>
+      </div>
+      <div class="job-list" id="job-list"></div>
+      <div class="empty-state" id="jobs-empty">
+        <span class="empty-pulse"></span>
+        <strong>No active reconstructions</strong>
+        <p>Your live stage, progress, elapsed time, and ETA will appear here.</p>
+      </div>
+    </section>
+
+    <section class="section-block" aria-labelledby="outputs-title">
+      <div class="section-heading">
+        <div>
+          <p class="section-number">03</p>
+          <h2 id="outputs-title">Reconstructed outputs</h2>
+        </div>
+        <span class="output-count" id="output-count">0 outputs</span>
+      </div>
+      <div class="output-grid" id="output-grid"></div>
+      <div class="empty-state output-empty" id="outputs-empty">
+        <span class="empty-film" aria-hidden="true">▶</span>
+        <strong>Your completed videos will live here</strong>
+        <p>Preview, download, or permanently remove each reconstruction.</p>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <span>AI-inferred reconstruction — not recovered ground truth</span>
+    <span>Local forensic workspace</span>
+  </footer>
+
+  <div class="modal-backdrop hidden" id="delete-modal" role="dialog" aria-modal="true" aria-labelledby="delete-title">
+    <div class="modal-card">
+      <span class="danger-icon" aria-hidden="true">!</span>
+      <h2 id="delete-title">Delete this reconstruction?</h2>
+      <p>This permanently removes the output video and any job-owned work files or retained upload from this computer.</p>
+      <div class="modal-actions">
+        <button class="secondary-button" id="cancel-delete" type="button">Cancel</button>
+        <button class="danger-button" id="confirm-delete" type="button">Delete permanently</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+</body>
+</html>

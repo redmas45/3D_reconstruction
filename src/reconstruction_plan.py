@@ -2,62 +2,135 @@ from scene_intelligence import bbox_area
 
 
 RENDER_CLASSES = {"person", "car", "truck", "bus", "motorcycle", "bicycle"}
+DEFAULT_REFERENCE_AGE_SECONDS = 2.0
 
 
-def _nearest_detection(track: dict, target_frame: int, side: str):
+def _nearest_detection(track: dict, target_frame: int, side: str) -> dict | None:
     detections = sorted(track.get("detections", []), key=lambda item: item["frame"])
-    if not detections:
-        return None
     if side == "before":
-        candidates = [det for det in detections if det["frame"] <= target_frame]
+        candidates = [item for item in detections if item["frame"] <= target_frame]
         return candidates[-1] if candidates else None
-    if side == "after":
-        candidates = [det for det in detections if det["frame"] >= target_frame]
-        return candidates[0] if candidates else None
-    return min(detections, key=lambda det: abs(det["frame"] - target_frame))
+    candidates = [item for item in detections if item["frame"] >= target_frame]
+    return candidates[0] if candidates else None
 
 
-def _velocity_from_track(track: dict, fps: float):
+def _boundary_velocity(track: dict, boundary_frame: int, side: str) -> list[float]:
     detections = sorted(track.get("detections", []), key=lambda item: item["frame"])
-    if len(detections) < 2:
-        return [0.0, 0.0, 0.0, 0.0]
-    first = detections[0]
-    last = detections[-1]
-    dt = max(1, last["frame"] - first["frame"])
-    return [(last["bbox"][i] - first["bbox"][i]) / dt for i in range(4)]
+    if side == "after":
+        sample = [item for item in detections if item["frame"] >= boundary_frame][:3]
+    else:
+        sample = [item for item in detections if item["frame"] <= boundary_frame][-3:]
+    if len(sample) < 2:
+        return [0.0] * 4
+    first, last = sample[0], sample[-1]
+    elapsed = max(1, last["frame"] - first["frame"])
+    return [(last["bbox"][index] - first["bbox"][index]) / elapsed for index in range(4)]
 
 
-def _lerp_bbox(a, b, t):
-    return [int(round((1.0 - t) * a[i] + t * b[i])) for i in range(4)]
+def _curved_bbox(
+    before_bbox: list[int],
+    after_bbox: list[int],
+    before_velocity: list[float],
+    after_velocity: list[float],
+    progress: float,
+    frame_count: int,
+) -> list[int]:
+    influence = progress * (1.0 - progress) * frame_count * 0.35
+    values = []
+    for index in range(4):
+        linear = before_bbox[index] * (1.0 - progress) + after_bbox[index] * progress
+        curve = (before_velocity[index] - after_velocity[index]) * influence
+        lower = min(before_bbox[index], after_bbox[index]) - 80
+        upper = max(before_bbox[index], after_bbox[index]) + 80
+        values.append(int(round(max(lower, min(upper, linear + curve)))))
+    return values
 
 
-def _extrapolate_bbox(bbox, velocity, frame_delta, max_delta=160):
-    out = []
-    for idx, value in enumerate(bbox):
-        delta = max(-max_delta, min(max_delta, velocity[idx] * frame_delta))
-        out.append(int(round(value + delta)))
-    return out
+def _extrapolated_bbox(bbox: list[int], velocity: list[float], frame_delta: int) -> list[int]:
+    max_displacement = 120
+    return [
+        int(round(value + max(-max_displacement, min(max_displacement, velocity[index] * frame_delta))))
+        for index, value in enumerate(bbox)
+    ]
 
 
-def _path_for_entity(track: dict, hidden_start: int, hidden_end: int, fps: float):
-    before = _nearest_detection(track, hidden_start - 1, "before")
-    after = _nearest_detection(track, hidden_end + 1, "after")
-    velocity = _velocity_from_track(track, fps)
-    total = max(1, hidden_end - hidden_start)
-
+def _path_for_entity(
+    track: dict,
+    before: dict | None,
+    after: dict | None,
+    hidden_start: int,
+    hidden_end: int,
+    confidence: float,
+) -> list[dict]:
+    frame_count = max(1, hidden_end - hidden_start)
+    before_velocity = _boundary_velocity(track, hidden_start - 1, "before")
+    after_velocity = _boundary_velocity(track, hidden_end + 1, "after")
     path = []
-    for frame_no in range(hidden_start, hidden_end + 1):
-        if before and after:
-            t = (frame_no - hidden_start) / total
-            bbox = _lerp_bbox(before["bbox"], after["bbox"], t)
-        elif before:
-            bbox = _extrapolate_bbox(before["bbox"], velocity, frame_no - before["frame"])
-        elif after:
-            bbox = _extrapolate_bbox(after["bbox"], velocity, frame_no - after["frame"])
-        else:
-            return []
-        path.append({"frame": frame_no, "bbox": bbox})
+    for frame_number in range(hidden_start, hidden_end + 1):
+        progress = (frame_number - hidden_start) / frame_count
+        bbox, opacity = _path_point(before, after, before_velocity, after_velocity, progress, frame_count)
+        uncertainty = int(round((1.0 - confidence) * max(24, bbox[3] - bbox[1]) * 0.65))
+        path.append({"frame": frame_number, "bbox": bbox, "opacity": opacity, "uncertainty_px": uncertainty})
     return path
+
+
+def _path_point(
+    before: dict | None,
+    after: dict | None,
+    before_velocity: list[float],
+    after_velocity: list[float],
+    progress: float,
+    frame_count: int,
+) -> tuple[list[int], float]:
+    if before and after:
+        bbox = _curved_bbox(before["bbox"], after["bbox"], before_velocity, after_velocity, progress, frame_count)
+        return bbox, 1.0
+    if before:
+        bbox = _extrapolated_bbox(before["bbox"], before_velocity, int(progress * frame_count))
+        return bbox, max(0.0, 1.0 - progress)
+    if after:
+        delta = -int((1.0 - progress) * frame_count)
+        bbox = _extrapolated_bbox(after["bbox"], after_velocity, delta)
+        return bbox, max(0.0, progress)
+    raise ValueError("A path requires before or after evidence")
+
+
+def _valid_reference(reference: dict | None, boundary: int, fps: float) -> dict | None:
+    if reference is None:
+        return None
+    maximum_age = max(1, int(round(DEFAULT_REFERENCE_AGE_SECONDS * fps)))
+    return reference if abs(reference["frame"] - boundary) <= maximum_age else None
+
+
+def _entity_confidence(track: dict, before: dict | None, after: dict | None, gap_seconds: float) -> float:
+    detector_confidence = float(track.get("avg_confidence", 0.0))
+    continuity = float(track.get("continuity_confidence", 0.0)) if before and after else 0.35
+    duration_factor = max(0.55, 1.0 - max(0.0, gap_seconds - 1.0) * 0.12)
+    return round(max(0.05, min(0.99, (0.55 * detector_confidence + 0.45 * continuity) * duration_factor)), 3)
+
+
+def _planned_entity(track: dict, hidden_start: int, hidden_end: int, fps: float) -> dict | None:
+    before = _valid_reference(_nearest_detection(track, hidden_start - 1, "before"), hidden_start - 1, fps)
+    after = _valid_reference(_nearest_detection(track, hidden_end + 1, "after"), hidden_end + 1, fps)
+    if before is None and after is None:
+        return None
+    gap_seconds = (hidden_end - hidden_start + 1) / fps
+    confidence = _entity_confidence(track, before, after, gap_seconds)
+    path = _path_for_entity(track, before, after, hidden_start, hidden_end, confidence)
+    return {
+        "id": track["id"],
+        "class_name": track["class_name"],
+        "direction": track["direction"],
+        "confidence": confidence,
+        "visible_before_gap": before is not None,
+        "visible_after_gap": after is not None,
+        "reference_before": before,
+        "reference_after": after,
+        "associated_objects": track.get("associated_objects", []),
+        "path": path,
+        "alternative_path_offset_px": max(8, path[len(path) // 2]["uncertainty_px"]),
+        "render_priority": bbox_area(path[len(path) // 2]["bbox"]),
+    }
 
 
 def build_reconstruction_plan(
@@ -69,57 +142,26 @@ def build_reconstruction_plan(
 ) -> dict:
     hidden_start, hidden_end = hidden_range
     entities = []
-
     for track in scene_report.get("tracks", []):
         if track["class_name"] not in RENDER_CLASSES:
             continue
-        if track["frames_seen"] < min_track_frames:
+        if track["frames_seen"] < min_track_frames or track["avg_area"] < 180:
             continue
-        if track["avg_area"] < 180:
-            continue
-
-        before = _nearest_detection(track, hidden_start - 1, "before")
-        after = _nearest_detection(track, hidden_end + 1, "after")
-        appears_in_gap = before is not None or after is not None
-        if not appears_in_gap:
-            continue
-
-        path = _path_for_entity(track, hidden_start, hidden_end, fps)
-        if not path:
-            continue
-
-        entities.append(
-            {
-                "id": track["id"],
-                "class_name": track["class_name"],
-                "direction": track["direction"],
-                "confidence": track["avg_confidence"],
-                "visible_before_gap": track["visible_before_gap"],
-                "visible_after_gap": track["visible_after_gap"],
-                "reference_before": before,
-                "reference_after": after,
-                "path": path,
-                "render_priority": bbox_area(path[len(path) // 2]["bbox"]),
-            }
-        )
-
-    entities.sort(
-        key=lambda item: (
-            item["visible_before_gap"] and item["visible_after_gap"],
-            item["render_priority"],
-        ),
-        reverse=True,
-    )
+        entity = _planned_entity(track, hidden_start, hidden_end, fps)
+        if entity:
+            entities.append(entity)
+    entities.sort(key=lambda item: (item["visible_before_gap"] and item["visible_after_gap"], item["render_priority"]), reverse=True)
     entities = entities[:max_entities]
-    entities.sort(key=lambda item: item["render_priority"])
+    overall_confidence = round(sum(item["confidence"] for item in entities) / max(1, len(entities)), 3)
     return {
         "hidden_range": {"start": hidden_start, "end": hidden_end},
         "fps": fps,
-        "strategy": "yolo_tracks_to_animated_3d_reconstruction",
+        "strategy": "evidence_grounded_2_5d_compositing",
+        "overall_confidence": overall_confidence,
         "entities": entities,
         "notes": [
-            "Visible chunks remain original frames.",
-            "Hidden chunk is reconstructed from visible detections, tracks, and entity crops.",
-            "No skeleton overlay is rendered in the final video.",
+            "Visible chunks remain original evidence with detection overlays.",
+            "The hidden gap uses only visible boundary frames, tracked entity crops, and inferred paths.",
+            "Confidence and alternative paths communicate uncertainty; this is not recovered ground truth.",
         ],
     }

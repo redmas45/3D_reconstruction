@@ -1,6 +1,8 @@
+from pathlib import Path
+from typing import Callable
+
 import cv2
-import os
-import json
+import numpy as np
 from ultralytics import YOLO
 
 
@@ -21,93 +23,138 @@ RELEVANT_COCO_CLASSES = {
 }
 
 
-def _scale_frame(frame, downscale_width: int):
+def _scale_frame(frame: np.ndarray, downscale_width: int) -> tuple[np.ndarray, float]:
     height, width = frame.shape[:2]
-    scale = 1.0
-    if downscale_width and width > downscale_width:
-        scale = downscale_width / width
-        frame = cv2.resize(frame, (int(width * scale), int(height * scale)))
-    return frame, scale
+    if not downscale_width or width <= downscale_width:
+        return frame, 1.0
+    scale = downscale_width / width
+    resized = cv2.resize(frame, (int(width * scale), int(height * scale)))
+    return resized, scale
+
+
+def _clamp_bbox(bbox: list[int], width: int, height: int) -> list[int]:
+    x1, y1, x2, y2 = bbox
+    return [
+        max(0, min(width - 1, x1)),
+        max(0, min(height - 1, y1)),
+        max(1, min(width, x2)),
+        max(1, min(height, y2)),
+    ]
+
+
+def _appearance_descriptor(frame: np.ndarray, bbox: list[int]) -> list[float]:
+    height, width = frame.shape[:2]
+    x1, y1, x2, y2 = _clamp_bbox(bbox, width, height)
+    crop = frame[y1:y2, x1:x2]
+    if crop.size == 0:
+        return [0.0] * 32
+    crop_height, crop_width = crop.shape[:2]
+    margin_x = int(crop_width * 0.12)
+    margin_y = int(crop_height * 0.08)
+    interior = crop[margin_y:max(margin_y + 1, crop_height - margin_y), margin_x:max(margin_x + 1, crop_width - margin_x)]
+    hsv = cv2.cvtColor(interior, cv2.COLOR_BGR2HSV)
+    histogram = cv2.calcHist([hsv], [0, 1], None, [8, 4], [0, 180, 0, 256])
+    histogram = cv2.normalize(histogram, histogram, norm_type=cv2.NORM_L1)
+    return [round(float(value), 6) for value in histogram.flatten()]
+
+
+def _reset_tracker(model: YOLO) -> None:
+    predictor = getattr(model, "predictor", None)
+    for tracker in getattr(predictor, "trackers", []) if predictor else []:
+        tracker.reset()
+
+
+def _box_detection(
+    box: object,
+    frame: np.ndarray,
+    frame_index: int,
+    segment_index: int,
+    scale: float,
+    class_names: dict[int, str],
+) -> dict:
+    class_id = int(box.cls[0])
+    coordinates = box.xyxy[0].cpu().numpy().tolist()
+    bbox = [int(value / scale) for value in coordinates]
+    return {
+        "frame": frame_index,
+        "segment_index": segment_index,
+        "source_track_id": int(box.id[0]) if box.id is not None else -1,
+        "class_id": class_id,
+        "class_name": class_names.get(class_id, str(class_id)),
+        "confidence": float(box.conf[0]) if box.conf is not None else 0.0,
+        "bbox": bbox,
+        "appearance": _appearance_descriptor(frame, bbox),
+    }
+
+
+def _detect_range(
+    model: YOLO,
+    capture: cv2.VideoCapture,
+    frame_range: tuple[int, int],
+    segment_index: int,
+    settings: dict,
+) -> tuple[list[dict], int]:
+    start, end = frame_range
+    capture.set(cv2.CAP_PROP_POS_FRAMES, start)
+    detections: list[dict] = []
+    processed_frames = 0
+    for frame_index in range(start, end + 1):
+        success, frame = capture.read()
+        if not success:
+            break
+        if (frame_index - start) % settings["frame_stride"] != 0:
+            continue
+        resized, scale = _scale_frame(frame, settings["downscale_width"])
+        results = model.track(resized, persist=True, verbose=False, **settings["track_args"])
+        processed_frames += 1
+        if not results or len(results[0].boxes) == 0:
+            continue
+        for box in results[0].boxes:
+            detections.append(_box_detection(box, frame, frame_index, segment_index, scale, model.names))
+    return detections, processed_frames
 
 
 def detect_scene_objects(
     video_path: str,
-    visible_ranges: list,
+    visible_ranges: list[tuple[int, int]],
     model_name: str = "yolo26m.pt",
-    class_ids: list = None,
-    frame_stride: int = 10,
+    class_ids: list[int] | None = None,
+    frame_stride: int = 8,
     downscale_width: int = 960,
     conf: float = 0.25,
-) -> list:
-    """
-    Runs YOLO tracking over selected visible frame ranges and returns structured detections.
-
-    visible_ranges are inclusive global frame ranges: [(start, end), ...].
-    Hidden frames should not be included.
-    """
-    class_ids = class_ids or sorted(RELEVANT_COCO_CLASSES.keys())
-    print(f"[Detector] Initializing {model_name} for scene analysis...")
+    tracker_config: str | None = None,
+    progress_callback: Callable[[int, int], None] | None = None,
+) -> list[dict]:
+    selected_classes = class_ids or sorted(RELEVANT_COCO_CLASSES)
+    print(f"[Detector] Initializing {model_name} for sequential scene tracking...")
     model = YOLO(model_name)
-
-    cap = cv2.VideoCapture(video_path)
-    if not cap.isOpened():
+    capture = cv2.VideoCapture(video_path)
+    if not capture.isOpened():
         raise FileNotFoundError(f"Cannot open video file: {video_path}")
 
-    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    detections = []
-    processed = 0
+    track_args = {"classes": selected_classes, "conf": conf}
+    if tracker_config:
+        track_args["tracker"] = str(Path(tracker_config).resolve())
+    settings = {
+        "frame_stride": max(1, int(frame_stride)),
+        "downscale_width": max(0, int(downscale_width)),
+        "track_args": track_args,
+    }
+    detections: list[dict] = []
+    processed_frames = 0
+    segment_total = len(visible_ranges)
+    for segment_index, frame_range in enumerate(visible_ranges):
+        if segment_index:
+            _reset_tracker(model)
+        segment_detections, segment_frames = _detect_range(
+            model, capture, frame_range, segment_index, settings
+        )
+        detections.extend(segment_detections)
+        processed_frames += segment_frames
+        print(f"[Detector] Segment {segment_index + 1}: {segment_frames} sampled frames.")
+        if progress_callback is not None:
+            progress_callback(segment_index + 1, segment_total)
 
-    for range_start, range_end in visible_ranges:
-        start = max(0, int(range_start))
-        end = min(total_frames - 1, int(range_end))
-        if end < start:
-            continue
-
-        for frame_idx in range(start, end + 1, max(1, frame_stride)):
-            cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
-            ret, frame = cap.read()
-            if not ret:
-                continue
-
-            frame_small, scale = _scale_frame(frame, downscale_width)
-            results = model.track(
-                frame_small,
-                persist=True,
-                classes=class_ids,
-                conf=conf,
-                verbose=False,
-            )
-
-            if results and len(results[0].boxes) > 0:
-                for box in results[0].boxes:
-                    class_id = int(box.cls[0])
-                    xyxy = box.xyxy[0].cpu().numpy().tolist()
-                    track_id = int(box.id[0]) if box.id is not None else -1
-                    detections.append(
-                        {
-                            "frame": frame_idx,
-                            "track_id": track_id,
-                            "class_id": class_id,
-                            "class_name": model.names.get(class_id, str(class_id)),
-                            "confidence": float(box.conf[0]) if box.conf is not None else 0.0,
-                            "bbox": [
-                                int(xyxy[0] / scale),
-                                int(xyxy[1] / scale),
-                                int(xyxy[2] / scale),
-                                int(xyxy[3] / scale),
-                            ],
-                        }
-                    )
-
-            processed += 1
-            if processed % 100 == 0:
-                print(f"[Detector] Processed {processed} sampled frames...")
-
-    cap.release()
-    print(
-        f"[Detector] Finished scene analysis with {model_name}: {len(detections)} detections "
-        f"from {processed} sampled frames ({width}x{height})."
-    )
+    capture.release()
+    print(f"[Detector] Finished: {len(detections)} detections from {processed_frames} sampled frames.")
     return detections

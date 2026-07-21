@@ -1238,13 +1238,14 @@ The cloud path uses one checked-in `colab/reconstruction.ipynb` as its operator 
 The notebook must:
 
 - refuse to start expensive work when Colab has not assigned an NVIDIA GPU or PyTorch cannot use CUDA
-- report Blender's graphics vendor/renderer separately instead of assuming Eevee uses NVIDIA through Xvfb
+- report Blender's graphics vendor/renderer separately and verify Cycles GPU access with a real OptiX/CUDA render instead of inferring it from Xvfb
 - install the pinned Blender 4.5 LTS binary, project Python requirements, and FFmpeg inside the ephemeral runtime
 - process from `/content` instead of directly against mounted Drive
 - accept one validated common-format video and derive a run identifier from video content, seed, effective configuration, Git commit, and Blender version
 - show live stage, detail, and aggregate progress emitted by the shared pipeline
-- default to two parallel Blender gap workers, retain a one-worker memory-pressure fallback, and permit three only when the assigned runtime has sufficient system RAM
-- use a Colab-safe Workbench profile at 75% scale with at most eight rendered entities and terminate a Blender gap after 15 minutes without a completed-frame marker
+- run YOLO and Blender sequentially on the same T4, explicitly releasing YOLO's cached CUDA allocations before the Blender phase
+- select Cycles GPU with 16 samples, denoising, one worker, 75% scale, and at most eight entities only after an OptiX or CUDA render probe succeeds
+- fall back automatically to a two-worker Colab-safe Workbench profile when both GPU probes fail, and terminate a Blender gap after 15 minutes without a completed-frame marker
 - copy only complete Blender gap artifacts to Google Drive through temporary checkpoint directories, and reuse them only when plan/render contracts match
 - restore compatible completed-gap checkpoints when the same video and deterministic seed are rerun
 - save the final video and JSON reports to Google Drive before offering download; skip inline embedding for results over 80 MB

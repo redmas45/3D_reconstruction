@@ -76,6 +76,8 @@ def write_report(
     report = {
         "blender_version": bpy.app.version_string,
         "render_engine": bpy.context.scene.render.engine,
+        "render_compute_device": plan["render"].get("cycles_compute_device", "graphics"),
+        "cycles_samples": plan["render"].get("cycles_samples"),
         "mode": arguments.mode,
         "elapsed_seconds": round(time.time() - started_at, 3),
         "frame_count": plan["frame_count"],

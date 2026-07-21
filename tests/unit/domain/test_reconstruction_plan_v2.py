@@ -28,6 +28,19 @@ class ReconstructionPlanV2Tests(unittest.TestCase):
                 self.assertEqual(width, plan["render"]["source_width"])
                 self.assertEqual(height, plan["render"]["source_height"])
 
+    def test_render_contract_preserves_cycles_gpu_settings(self) -> None:
+        cycles_configuration = {
+            "engine": "CYCLES",
+            "cycles_compute_device": "OPTIX",
+            "cycles_samples": 16,
+            "cycles_use_denoising": True,
+        }
+
+        plan = _build_plan(1280, 720, [], render_configuration=cycles_configuration)
+
+        validate_reconstruction_plan_v2(plan)
+        self.assertEqual(cycles_configuration["cycles_compute_device"], plan["render"]["cycles_compute_device"])
+
     def test_render_contract_rejects_nonpositive_source_dimensions(self) -> None:
         plan = _build_plan(1280, 720, [])
         for field_name, invalid_value in (("source_width", 0), ("source_height", -1)):
@@ -88,6 +101,7 @@ def _build_plan(
     height: int,
     tracks: list[dict],
     likely_gap_entities: dict[str, list[str]] | None = None,
+    render_configuration: dict | None = None,
 ) -> dict:
     scene_report = {
         "video": {"width": width, "height": height, "fps": FRAME_RATE, "frames": 120},
@@ -104,6 +118,7 @@ def _build_plan(
         _identity_registry(tracks),
         HIDDEN_RANGE,
         gap_index=0,
+        render_configuration=render_configuration,
     )
 
 

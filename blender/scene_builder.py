@@ -8,6 +8,7 @@ from environment_builder import build_environment, build_path_trail
 from frame_rate import blender_frame_rate
 from hud import build_hud
 from human_builder import build_human
+from render_device import CYCLES_RENDER_ENGINE, configure_cycles_render
 from vehicle_builder import build_vehicle
 
 
@@ -49,6 +50,8 @@ def configure_render(scene: bpy.types.Scene, plan: dict) -> None:
     scene.render.engine = render_contract.get("engine", "BLENDER_EEVEE_NEXT")
     if scene.render.engine == WORKBENCH_RENDER_ENGINE:
         _configure_workbench(scene)
+    if scene.render.engine == CYCLES_RENDER_ENGINE:
+        configure_cycles_render(scene, render_contract)
     scene.render.resolution_x = int(render_contract["source_width"])
     scene.render.resolution_y = int(render_contract["source_height"])
     scene.render.resolution_percentage = int(

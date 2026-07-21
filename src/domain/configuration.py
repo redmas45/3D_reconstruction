@@ -8,6 +8,9 @@ MAXIMUM_MISSING_FRACTION = 0.95
 MAXIMUM_PARALLEL_GAP_RENDERERS = 4
 MINIMUM_RENDER_STALL_TIMEOUT_SECONDS = 60
 MAXIMUM_RENDER_STALL_TIMEOUT_SECONDS = 86_400
+SUPPORTED_BLENDER_ENGINES = frozenset({"BLENDER_EEVEE_NEXT", "BLENDER_WORKBENCH", "CYCLES"})
+SUPPORTED_CYCLES_COMPUTE_DEVICES = frozenset({"CUDA", "OPTIX"})
+MAXIMUM_CYCLES_SAMPLES = 4_096
 
 
 class ConfigurationValidationError(ValueError):
@@ -72,6 +75,26 @@ def _validate_renderer_configuration(renderer_configuration: dict) -> None:
         raise ConfigurationValidationError(
             "renderer.gap_render_stall_timeout_seconds must be between 60 and 86400"
         )
+    _validate_optional_cycles_configuration(renderer_configuration)
+
+
+def _validate_optional_cycles_configuration(renderer_configuration: dict) -> None:
+    engine = renderer_configuration.get("engine")
+    if engine is not None and engine not in SUPPORTED_BLENDER_ENGINES:
+        raise ConfigurationValidationError("renderer.engine is unsupported")
+    compute_device = renderer_configuration.get("cycles_compute_device")
+    if compute_device is not None and compute_device not in SUPPORTED_CYCLES_COMPUTE_DEVICES:
+        raise ConfigurationValidationError("renderer.cycles_compute_device must be CUDA or OPTIX")
+    samples = renderer_configuration.get("cycles_samples")
+    if samples is not None and (
+        isinstance(samples, bool) or not isinstance(samples, int) or not 1 <= samples <= MAXIMUM_CYCLES_SAMPLES
+    ):
+        raise ConfigurationValidationError(
+            f"renderer.cycles_samples must be between 1 and {MAXIMUM_CYCLES_SAMPLES}"
+        )
+    use_denoising = renderer_configuration.get("cycles_use_denoising")
+    if use_denoising is not None and not isinstance(use_denoising, bool):
+        raise ConfigurationValidationError("renderer.cycles_use_denoising must be boolean")
 
 
 def _required_number(configuration: dict, field_name: str) -> float:

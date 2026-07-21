@@ -80,6 +80,9 @@ def _load_scene_builder() -> types.ModuleType:
         "frame_rate": _module_with("frame_rate", blender_frame_rate=lambda fps: (round(fps), 1.0)),
         "hud": _module_with("hud", build_hud=lambda plan, camera: None),
         "human_builder": _module_with("human_builder", build_human=lambda entity: None),
+        "render_device": _module_with(
+            "render_device", CYCLES_RENDER_ENGINE="CYCLES", configure_cycles_render=lambda *arguments: [],
+        ),
         "vehicle_builder": _module_with("vehicle_builder", build_vehicle=lambda entity: None),
     }
     module_path = PROJECT_ROOT / "blender" / "scene_builder.py"

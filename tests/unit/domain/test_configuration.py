@@ -55,6 +55,24 @@ class ConfigurationValidationTests(unittest.TestCase):
         with self.assertRaisesRegex(ConfigurationValidationError, "gap_render_stall_timeout_seconds"):
             validate_configuration(invalid_configuration)
 
+    def test_accepts_cycles_gpu_renderer_configuration(self) -> None:
+        cycles_configuration = copy.deepcopy(self.configuration)
+        cycles_configuration["renderer"].update({
+            "engine": "CYCLES",
+            "cycles_compute_device": "OPTIX",
+            "cycles_samples": 16,
+            "cycles_use_denoising": True,
+        })
+
+        validate_configuration(cycles_configuration)
+
+    def test_rejects_unsupported_cycles_compute_device(self) -> None:
+        invalid_configuration = copy.deepcopy(self.configuration)
+        invalid_configuration["renderer"]["cycles_compute_device"] = "METAL"
+
+        with self.assertRaisesRegex(ConfigurationValidationError, "cycles_compute_device"):
+            validate_configuration(invalid_configuration)
+
 
 if __name__ == "__main__":
     unittest.main()

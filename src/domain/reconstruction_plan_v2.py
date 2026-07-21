@@ -19,7 +19,12 @@ DEFAULT_RENDER_CONFIGURATION = {
     "engine": "BLENDER_EEVEE_NEXT",
     "preview_scale_percent": 75,
     "production_scale_percent": 100,
+    "cycles_compute_device": "CUDA",
+    "cycles_samples": 16,
+    "cycles_use_denoising": True,
 }
+SUPPORTED_RENDER_ENGINES = frozenset({"BLENDER_EEVEE_NEXT", "BLENDER_WORKBENCH", "CYCLES"})
+SUPPORTED_CYCLES_COMPUTE_DEVICES = frozenset({"CUDA", "OPTIX"})
 
 
 class PlanValidationError(ValueError):
@@ -130,7 +135,7 @@ def _selection_report(entities: list[dict], selected_entities: list[dict]) -> di
 
 def _render_contract(render_configuration: dict | None, video: dict) -> dict:
     configured = render_configuration or {}
-    return {
+    contract = {
         "engine": str(configured.get("engine", DEFAULT_RENDER_CONFIGURATION["engine"])),
         "preview_scale_percent": int(configured.get(
             "preview_scale_percent", DEFAULT_RENDER_CONFIGURATION["preview_scale_percent"]
@@ -141,6 +146,19 @@ def _render_contract(render_configuration: dict | None, video: dict) -> dict:
         "source_width": int(video["width"]),
         "source_height": int(video["height"]),
     }
+    if contract["engine"] == "CYCLES":
+        contract.update({
+            "cycles_compute_device": str(configured.get(
+                "cycles_compute_device", DEFAULT_RENDER_CONFIGURATION["cycles_compute_device"]
+            )),
+            "cycles_samples": int(configured.get(
+                "cycles_samples", DEFAULT_RENDER_CONFIGURATION["cycles_samples"]
+            )),
+            "cycles_use_denoising": bool(configured.get(
+                "cycles_use_denoising", DEFAULT_RENDER_CONFIGURATION["cycles_use_denoising"]
+            )),
+        })
+    return contract
 
 
 def _exclusion_reason(entity: dict) -> str:
@@ -272,8 +290,8 @@ def _closest_boundary_detection(track: dict, hidden_range: tuple[int, int]) -> d
 def _validate_render_contract(value: object) -> None:
     if not isinstance(value, dict):
         raise PlanValidationError("Plan render contract must be an object")
-    if not isinstance(value.get("engine"), str) or not value["engine"].strip():
-        raise PlanValidationError("Render engine must be a non-empty string")
+    if value.get("engine") not in SUPPORTED_RENDER_ENGINES:
+        raise PlanValidationError("Render engine is unsupported")
     integer_fields = (
         "preview_scale_percent", "production_scale_percent", "source_width", "source_height",
     )
@@ -281,6 +299,15 @@ def _validate_render_contract(value: object) -> None:
         field_value = value.get(field_name)
         if isinstance(field_value, bool) or not isinstance(field_value, int) or field_value <= 0:
             raise PlanValidationError(f"Render {field_name} must be a positive integer")
+    if value["engine"] != "CYCLES":
+        return
+    if value.get("cycles_compute_device") not in SUPPORTED_CYCLES_COMPUTE_DEVICES:
+        raise PlanValidationError("Cycles compute device must be CUDA or OPTIX")
+    if not isinstance(value.get("cycles_use_denoising"), bool):
+        raise PlanValidationError("Cycles denoising flag must be boolean")
+    cycles_samples = value.get("cycles_samples")
+    if isinstance(cycles_samples, bool) or not isinstance(cycles_samples, int) or cycles_samples <= 0:
+        raise PlanValidationError("Cycles samples must be a positive integer")
 
 
 def _overall_confidence(entities: list[dict], camera: dict) -> float:

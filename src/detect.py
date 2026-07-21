@@ -1,3 +1,4 @@
+import gc
 from pathlib import Path
 from typing import Callable
 
@@ -64,6 +65,16 @@ def _reset_tracker(model: YOLO) -> None:
     predictor = getattr(model, "predictor", None)
     for tracker in getattr(predictor, "trackers", []) if predictor else []:
         tracker.reset()
+
+
+def _release_cuda_cache() -> None:
+    try:
+        import torch
+    except ImportError:
+        return
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
 
 
 def _box_detection(
@@ -166,5 +177,7 @@ def detect_scene_objects(
                 progress_callback(segment_index + 1, segment_total)
     finally:
         capture.release()
+        del model
+        _release_cuda_cache()
     print(f"[Detector] Finished: {len(detections)} detections from {processed_frames} sampled frames.")
     return detections

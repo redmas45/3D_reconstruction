@@ -1243,8 +1243,8 @@ The notebook must:
 - process from `/content` instead of directly against mounted Drive
 - accept one validated common-format video and derive a run identifier from video content, seed, effective configuration, Git commit, and Blender version
 - show live stage, detail, and aggregate progress emitted by the shared pipeline
-- default to one Blender gap worker until a runtime-specific benchmark proves that additional workers improve throughput
-- allow four hours without a Blender frame marker in Colab while permitting renders that continue making progress to run beyond that duration
+- default to two parallel Blender gap workers, retain a one-worker memory-pressure fallback, and permit three only when the assigned runtime has sufficient system RAM
+- use a Colab-safe Workbench profile at 75% scale with at most eight rendered entities and terminate a Blender gap after 15 minutes without a completed-frame marker
 - copy only complete Blender gap artifacts to Google Drive through temporary checkpoint directories, and reuse them only when plan/render contracts match
 - restore compatible completed-gap checkpoints when the same video and deterministic seed are rerun
 - save the final video and JSON reports to Google Drive before offering download; skip inline embedding for results over 80 MB

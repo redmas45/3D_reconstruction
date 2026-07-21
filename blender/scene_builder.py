@@ -13,6 +13,7 @@ from vehicle_builder import build_vehicle
 
 RENDERABLE_HUMANS = {"person"}
 DEFAULT_RENDER_SCALE_PERCENT = 75
+WORKBENCH_RENDER_ENGINE = "BLENDER_WORKBENCH"
 
 
 def build_scene(plan: dict) -> bpy.types.Scene:
@@ -46,6 +47,8 @@ def clear_scene() -> None:
 def configure_render(scene: bpy.types.Scene, plan: dict) -> None:
     render_contract = plan.get("render", {})
     scene.render.engine = render_contract.get("engine", "BLENDER_EEVEE_NEXT")
+    if scene.render.engine == WORKBENCH_RENDER_ENGINE:
+        _configure_workbench(scene)
     scene.render.resolution_x = int(render_contract["source_width"])
     scene.render.resolution_y = int(render_contract["source_height"])
     scene.render.resolution_percentage = int(
@@ -59,6 +62,15 @@ def configure_render(scene: bpy.types.Scene, plan: dict) -> None:
     scene.world.color = (0.006, 0.010, 0.018)
     scene.render.use_file_extension = True
     scene.view_settings.look = "AgX - Medium High Contrast"
+
+
+def _configure_workbench(scene: bpy.types.Scene) -> None:
+    scene.display.shading.light = "STUDIO"
+    scene.display.shading.color_type = "MATERIAL"
+    scene.display.shading.show_shadows = True
+    scene.display.shading.show_cavity = True
+    scene.display.shading.cavity_type = "WORLD"
+    scene.display.shading.show_specular_highlight = True
 
 
 def build_camera(camera_contract: dict) -> bpy.types.Object:

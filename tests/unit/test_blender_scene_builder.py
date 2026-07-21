@@ -48,6 +48,26 @@ class BlenderSceneBuilderTests(unittest.TestCase):
 
         environment_builder._build_street_proxies.assert_not_called()
 
+    def test_workbench_render_uses_material_colors_and_depth_cues(self) -> None:
+        scene_builder = _load_scene_builder()
+        scene = _empty_scene()
+        scene.display = SimpleNamespace(shading=SimpleNamespace())
+        plan = {
+            "fps": 30.0,
+            "render": {
+                "engine": "BLENDER_WORKBENCH",
+                "preview_scale_percent": 75,
+                "source_width": 1280,
+                "source_height": 720,
+            },
+        }
+
+        scene_builder.configure_render(scene, plan)
+
+        self.assertEqual("MATERIAL", scene.display.shading.color_type)
+        self.assertTrue(scene.display.shading.show_shadows)
+        self.assertTrue(scene.display.shading.show_cavity)
+
 
 def _load_scene_builder() -> types.ModuleType:
     stub_modules = {

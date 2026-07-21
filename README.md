@@ -91,7 +91,7 @@ The UI uses only Python's standard-library HTTP server and vanilla HTML, CSS, an
 
 Open or upload `colab/reconstruction.ipynb` in Google Colab, select a GPU runtime, and run its cells in order. The notebook clones this repository and calls the same `src/`, `blender/`, and `config/` pipeline used by the local interface; it does not maintain a second reconstruction implementation or expose the local web UI through a tunnel.
 
-The notebook installs Blender 4.5 LTS and FFmpeg, verifies PyTorch CUDA for YOLO, and separately reports Blender's graphics vendor/renderer. An NVIDIA Colab runtime does not by itself prove that Eevee uses NVIDIA through Xvfb, so the notebook defaults to one Blender worker until a runtime-specific benchmark justifies more. It accepts one common-format video, renders from fast `/content` storage, checkpoints compatible completed gaps to Google Drive, saves reports/video under `MyDrive/3D_Reconstruction`, and skips memory-heavy inline playback for results over 80 MB. Push local changes to `main` before starting so the clone uses this code.
+The notebook installs Blender 4.5 LTS and FFmpeg, verifies PyTorch CUDA for YOLO, and separately reports Blender's graphics vendor/renderer. An NVIDIA Colab runtime does not itself prove that Eevee uses NVIDIA through Xvfb. Colab therefore uses a reliable Workbench profile at 75% scale with at most eight rendered entities and a 15-minute no-frame timeout. It defaults to two parallel Blender workers, supports a one-worker fallback after memory pressure, and permits three only when the assigned runtime has enough system RAM. It accepts one common-format video, renders from fast `/content` storage, checkpoints compatible completed gaps to Google Drive, saves reports/video under `MyDrive/3D_Reconstruction`, and skips memory-heavy inline playback for results over 80 MB. Push local changes to `main` before starting so the clone uses this code.
 
 ## Project Structure
 
@@ -135,7 +135,7 @@ The primary settings are in `config/reconstruction_config.json`:
 }
 ```
 
-The UI accepts fractional source rates such as 29.97 and 59.94 fps. The job manager keeps one full video reconstruction active at a time. Within that job, a bounded three-thread pool launches up to three independent Blender subprocesses for separate gaps. Raise this setting only after measuring memory and render-device pressure. The Blender timeout is inactivity-based: every completed frame resets it, so a slow render is allowed to continue while a process producing no frame progress for the configured period is terminated. The Colab notebook overrides the inactivity window to four hours. Source frames remain streamed instead of being held as an uncompressed full-video RAM cache.
+The UI accepts fractional source rates such as 29.97 and 59.94 fps. The job manager keeps one full video reconstruction active at a time. Within that job, a bounded three-thread pool launches up to three independent Blender subprocesses for separate gaps. Raise this setting only after measuring memory and render-device pressure. The Blender timeout is inactivity-based: every completed frame resets it, so a slow render is allowed to continue while a process producing no frame progress for the configured period is terminated. The Colab Workbench profile uses a 15-minute inactivity window. Source frames remain streamed instead of being held as an uncompressed full-video RAM cache.
 
 ## Supported Input Profile and Known Limits
 

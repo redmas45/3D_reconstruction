@@ -43,7 +43,15 @@ def render_preview(scene: bpy.types.Scene, plan: dict, output_path: Path) -> Non
 
 
 def render_animation(scene: bpy.types.Scene, plan: dict, output_path: Path) -> None:
-    scene.render.resolution_percentage = int(plan.get("render", {}).get("production_scale_percent", 100))
+    render_contract = plan.get("render", {})
+    scale = int(render_contract.get("production_scale_percent", 100)) / 100.0
+    scene.render.resolution_x = _even_render_dimension(
+        round(int(render_contract["source_width"]) * scale)
+    )
+    scene.render.resolution_y = _even_render_dimension(
+        round(int(render_contract["source_height"]) * scale)
+    )
+    scene.render.resolution_percentage = 100
     scene.render.image_settings.file_format = "FFMPEG"
     scene.render.ffmpeg.format = "MPEG4"
     scene.render.ffmpeg.codec = "H264"
@@ -92,6 +100,11 @@ def _actual_resolution(scene: bpy.types.Scene) -> list[int]:
     return [round(scene.render.resolution_x * scale), round(scene.render.resolution_y * scale)]
 
 
+def _even_render_dimension(value: int) -> int:
+    bounded_value = max(2, value)
+    return bounded_value if bounded_value % 2 == 0 else bounded_value + 1
+
+
 def _fidelity_counts(plan: dict) -> dict[str, int]:
     counts = {"supported": 0, "plausible": 0, "weak": 0}
     for entity in plan["entities"]:
@@ -112,6 +125,10 @@ def _boundary_residuals(plan: dict) -> list[dict]:
 
 def _render_warnings(plan: dict) -> list[str]:
     warnings = []
+    if plan["camera"].get("mode") == "generic_ground_prior":
+        warnings.append("Camera geometry uses a generic ground prior, not a solved calibration")
+    if plan["camera"].get("motion_model") == "dynamic_camera":
+        warnings.append("Measured source camera motion is not applied to this render")
     if plan["camera"]["calibration_confidence"] < 0.75:
         warnings.append("Camera calibration requires visual review")
     weak_count = sum(entity["fidelity_tier"] == "weak" for entity in plan["entities"])
@@ -134,6 +151,7 @@ def main() -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     scene = build_scene(plan)
     Path(arguments.blend).resolve().parent.mkdir(parents=True, exist_ok=True)
+    bpy.ops.file.pack_all()
     bpy.ops.wm.save_as_mainfile(filepath=str(Path(arguments.blend).resolve()))
     if arguments.mode == "preview":
         render_preview(scene, plan, output_path)

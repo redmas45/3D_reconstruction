@@ -4,30 +4,32 @@
 
 This is the approved, living implementation plan for the AI evidence-gap reconstruction project. It records the target architecture, acceptance gates, completed work, measured results, and remaining validation work.
 
-### Implementation status — 21 July 2026
+### Implementation status — audited 21 July 2026
 
-- Phase 0 is implemented: the OpenCV 2.5D renderer remains an explicit fallback, Blender 4.5 LTS runs headlessly through a JSON-only boundary, and real preview/production timings are recorded.
-- Phase 1 is implemented and unit tested: plan v2, visible-only evidence validation, delayed hidden-truth materialization, global identity registry, static/dynamic camera measurement, robust height priors, forward-predicted three-point paths, soft post-gap residuals, crossing-appearance rejection, heading-conflict downgrades, and formal presentation filtering.
-- Phase 2 is implemented and visually reviewed: calibrated forensic camera, ground plane, city-street proxies, evidence inset, procedural people/vehicles, confidence HUD, and midpoint rendering.
-- Phase 3 is implemented and technically verified on gap 0 and a short end-to-end fixture: articulated motion, lifecycle fades, confidence-to-fidelity tiers, forensic entry/exit shutter, exact frame count, exact fractional frame rate, and full-resolution Blender encoding.
-- UI/pipeline integration is implemented: Blender is the default selectable renderer, 2.5D is an explicit fallback, errors do not silently switch renderers, progress is surfaced through the existing queue, FFmpeg preserves source audio, and final media contracts are validated.
-- Arbitrary-video hardening now covers 59.94 fps sources without Blender's integer FPS clamp, uses three configurable parallel Blender gap workers, and avoids writing unused raw visible-segment copies. Full videos remain streamed so the 32 GB workstation retains memory headroom for YOLO, Blender, and the operating system.
-- Windows job metadata persistence uses unique temporary files and bounded retry/backoff so transient antivirus or indexing locks cannot fail a reconstruction; instant preparation stages emit one persisted update instead of a rapid write burst.
-- Active and queued jobs can be cancelled from the UI. Cancellation is propagated through Python checkpoints and terminates active Blender and FFmpeg subprocesses; cancelled jobs remain removable but are never mislabeled as failures.
-- Phase 4 (three representative gaps), Phase 5 (full `input_vid3.mp4`), Phase 6 final judge polish, and Phase 7 second-video validation remain approval gates. They are not represented as complete.
+- Phase 0 is implemented: the OpenCV 2.5D renderer remains an explicit fallback and Blender 4.5 LTS runs headlessly through a JSON-only boundary.
+- Phase 1 is substantially implemented and unit tested: visible-only evidence enforcement, delayed hidden-truth materialization, identity registry, motion measurement, robust height priors, forward-predicted three-point paths, soft post-gap residuals, crossing-appearance rejection, and confidence-driven presentation filtering.
+- Phase 2 is **partial**, not complete: source resolution, ground grid, evidence inset, procedural entities, confidence HUD, and neutral/vehicle-supported proxy profiles exist. True per-video camera/ground calibration, proxy authoring, wireframe reprojection validation, and camera-motion application do not.
+- Phase 3 is **partial**: primitive-based articulated motion, lifecycle fades, confidence fidelity tiers, transition shutters, fractional frame rates, and source resolution are implemented. Human armatures/skeletal rigs and representative-gap visual approval remain pending.
+- UI/pipeline integration is implemented, including one-video queueing, three local Blender gap workers, cancellation, live progress, output playback/deletion, and a 2.5D fallback. Metadata writes are throttled and transactional so frame callbacks do not create Windows write contention or ghost jobs.
+- Runtime hardening now performs FFmpeg, FFprobe, and Blender preflight; rejects variable-frame-rate, odd-dimension, over-4K-budget, over-120-fps, and over-10-minute sources; validates decoded segment/output contracts; preserves portrait and landscape dimensions; stops sibling Blender processes after one gap fails; and prevents short source audio from truncating video.
+- Resume state is content-addressed by source SHA-256. Selection and detection JSON use atomic replacement and malformed-cache recovery; Blender reuse verifies the plan/report contract and the physical MP4 contract before accepting a completed gap.
+- The local service is single-instance and loopback-only, validates request hosts, bounds request/upload stalls, persists clean public errors, supports cancellation, and closes active browser connections during shutdown.
+- The supported profile is currently constant-frame-rate, static-camera footage with people or road vehicles visible near gap boundaries. Moving-camera footage is experimental because motion is measured but not applied to the Blender camera; arbitrary indoor/general-scene reconstruction is not claimed as flawless.
+- Phase 4 (three representative gaps), Phase 5 (full one-video render), Phase 6 judge polish, and Phase 7 second-video validation remain approval gates.
 
-Measured verification artifacts:
+Historical render artifacts (useful for timing/container inspection, but generated before the current evidence/calibration hardening and therefore not current visual-acceptance proof):
 
 - `outputs/blender_preview_input_vid3/gap_00/`: original-video gap-0 midpoint, animation, plan, `.blend`, report, log, and contact sheet.
 - `outputs/e2e_blender_smoke/`: 150-frame UI-pipeline smoke result with one 38-frame Blender gap, H.264 video, AAC audio, and exact 1280×720 / 29.970029 fps contract.
 - Eevee production timing on this CPU: final 57-frame gap with transitions in 560.489 seconds; 38-frame smoke gap in 261.256 seconds.
-- Automated suite: 35 tests passing after the Blender/UI/audio integration and residual-confidence correction.
+- Automated verification: 104 tests pass. Coverage includes source admission, content-addressed and corrupt-cache recovery, evidence isolation, sibling cancellation, metadata rollback, audio duration, local API races, and UI-controller behavior.
+- A real headless Blender contract probe preserved a 720×1280 portrait resolution at 29.97 fps. A new full render has not been run during this audit.
 
 ## 2. Current State
 
 The project now:
 
-- reads videos from `data/input`
+- accepts one uploaded video at a time through the local UI or Colab notebook
 - distributes approximately 25% of the video across random 1–3 second gaps
 - keeps the remaining 75% as YOLO-annotated evidence
 - tracks visible people, vehicles, and carried objects
@@ -40,7 +42,7 @@ The project now:
 
 The earlier OpenCV output had background dissolves, duplicated pedestrians, sliding cutouts, weak masks, and no scene geometry. That output remains available only as a compatibility fallback. The current Blender direction uses deliberate stylized forensic 3D and exposes uncertainty rather than attempting an untrustworthy photoreal recovery.
 
-Blender 4.5.10 LTS and FFmpeg 8.1.2 are installed and integrated through checked-in scripts. Blender reads validated JSON contracts and does not import the system-Python business modules.
+Blender 4.5.10 LTS is installed and the checked-in integration is available. FFmpeg integration is implemented, but FFmpeg is **not currently discoverable on this workstation**; the pipeline now stops at preflight before expensive detection/rendering until it is installed. Blender reads validated JSON contracts and does not import the system-Python business modules.
 
 ## 3. Product Goal
 
@@ -190,9 +192,10 @@ Proposed structure:
   "duration_seconds": 1.90,
   "overall_confidence": 0.71,
   "camera": {
-    "mode": "evidence_matched",
-    "motion_model": "stabilized_dynamic",
-    "calibration_confidence": 0.83,
+    "mode": "generic_ground_prior",
+    "motion_model": "dynamic_camera",
+    "motion_applied_to_render": false,
+    "calibration_confidence": 0.49,
     "canonical_frame": 145,
     "focal_length_mm": 35.0,
     "position": [0.0, -12.0, 4.5],
@@ -278,12 +281,14 @@ A post-gap residual above the configured world-distance threshold must remain vi
 
 Convert image-space detections into stable world-space motion while accounting for camera motion and scale uncertainty.
 
+**Current audited state:** this section remains the target design. The implementation measures visible-frame camera motion and robust height priors, but it currently uses a fixed generic ground/camera prior. It does not solve a homography, horizon, focal length, or per-frame camera pose. Unmeasured ground-reprojection and horizon components are no longer assigned fabricated scores; camera-prior confidence is capped below `0.50`, and dynamic-camera reports are marked experimental.
+
 ### Camera model selection
 
-The pipeline must classify each video as either `static_camera` or `stabilized_dynamic_camera` before applying a ground-plane transform.
+The pipeline must classify each video as either `static_camera` or `dynamic_camera` before applying a ground-plane transform.
 
 - `static_camera`: one reviewed calibration may be reused across the video.
-- `stabilized_dynamic_camera`: estimate visible-frame camera motion relative to a canonical evidence frame, then maintain a camera-pose track.
+- `dynamic_camera`: estimate visible-frame camera motion relative to a canonical evidence frame, then maintain a camera-pose track. This pose-track application is pending.
 
 A single global homography must never be assumed when measured camera motion exceeds the configured translation, rotation, or scale threshold. Camera motion can be estimated from static background features using robust feature matching or ECC. Dynamic foreground boxes must be excluded from camera-motion estimation.
 
@@ -359,7 +364,7 @@ The first judge-facing video should be calibrated and visually reviewed manually
 
 ### Mesh and rig
 
-The first version will generate a clean low-poly human from Blender primitives. Each person receives an armature with:
+The target human system generates a clean low-poly human with an armature. The current implementation uses visible Blender primitives parented under articulated controls; it has walking limb motion but no skeletal armature yet. The target armature contains:
 
 - root
 - pelvis
@@ -392,7 +397,7 @@ The system will not attempt biometric identity reconstruction or detailed faces.
 Appearance and body construction must be generated once per global track ID, never once per gap. After scene intelligence completes, the pipeline writes:
 
 ```text
-outputs/_work/<video>/entity_registry.json
+outputs/jobs/<job_id>/_work/<video>_<source_sha12>/entity_registry.json
 ```
 
 Each registry entry contains:
@@ -513,6 +518,8 @@ Proxy geometry is recommended for the first judge-facing video because it is pre
 
 ### Proxy-geometry authoring workflow
 
+**Status: pending.** The renderer currently provides a generic neutral grid and enables street proxy blocks only when a rendered vehicle supports that context. It does not yet author evidence-aligned geometry or validate proxy reprojection.
+
 Proxy placement must be evidence-aligned rather than estimated in an empty viewport. A Blender-side authoring tool will:
 
 1. Load the reviewed camera calibration.
@@ -606,7 +613,10 @@ The normal Python process will invoke Blender in background mode:
 ```text
 blender --background --python blender/render_gap.py -- \
   --plan <reconstruction_plan_v2.json> \
-  --output <gap_render_directory>
+  --output <gap_video_or_preview> \
+  --report <render_report.json> \
+  --blend <scene.blend> \
+  --mode <preview-or-animation>
 ```
 
 ### Render format
@@ -618,7 +628,7 @@ Recommended intermediate format:
 - original frame rate
 - deterministic frame numbering
 
-PNG sequences are restartable and avoid losing an entire render if a process stops. After rendering, frames will be encoded into a gap video.
+PNG sequences are restartable and avoid losing an entire render if a process stops. After rendering, frames will be encoded into a gap video. **Current state:** preview mode writes one PNG, while animation mode currently writes H.264 MP4 directly and resumes only at complete-gap granularity. Per-frame PNG resume remains a target improvement, not an implemented claim.
 
 ### Render engine
 
@@ -635,21 +645,25 @@ Each gap receives a cache signature based on:
 
 Unchanged gaps should not be rerendered.
 
+**Current audited cache contract:** reuse verifies the exact plan SHA-256, animation mode, engine, frame count, production resolution, frame rate, and non-empty artifacts. Automatic Blender-script version hashing remains pending; code changes that do not alter the plan should therefore use a fresh run identifier or explicitly bump the renderer contract.
+
 ## 17. Encoding and Audio
 
 The existing OpenCV stitcher drops audio and produces inefficient `mp4v` output.
 
-The proposed pipeline will use FFmpeg after explicit approval to:
+The implemented pipeline uses FFmpeg to:
 
 - encode H.264 video
 - preserve the original frame rate
 - concatenate visible and reconstructed segments without changing duration
-- copy or remux source audio when present
+- encode source audio when present while constraining output duration to the exact reconstructed video duration
 - produce a broadly compatible MP4
 
-FFmpeg is not currently installed. It is a separate dependency and must not be installed until this plan is approved.
+FFmpeg is not currently discoverable on this workstation. Installation remains an operator action; runtime preflight now reports the dependency before detection or Blender rendering begins.
 
-## 18. Proposed Files
+## 18. Implemented and Target Files
+
+The following map contains both implemented core files and explicitly pending calibration/proxy authoring modules. A listed target is not evidence that it exists.
 
 ```text
 config/
@@ -721,7 +735,7 @@ web/
 app.py
 ```
 
-Existing OpenCV compositing remains available as `--renderer 2d` until Blender output passes acceptance gates.
+Existing OpenCV compositing remains available through the UI's explicit `Fast 2.5D fallback` selection. The local CLI controls only host, port, and browser launch; it does not expose a `--renderer` flag.
 
 ## 19. Proposed CLI
 
@@ -730,7 +744,7 @@ python app.py
 python app.py --host 127.0.0.1 --port 8000
 ```
 
-The browser UI is the supported operator surface. The reconstruction orchestrator lives in `src/application/reconstruction_pipeline.py`; the obsolete root `run.py` entrypoint is removed after its behavior is preserved. Preview-gap and renderer selection will be exposed through UI controls when the Blender phases implement them.
+The browser UI is the supported operator surface. The reconstruction orchestrator lives in `src/application/reconstruction_pipeline.py`; the obsolete root `run.py` entrypoint is removed. Renderer selection is already exposed in the UI, while a dedicated preview-gap control remains pending.
 
 ## 20. Implementation Phases and Approval Gates
 
@@ -747,12 +761,12 @@ Work:
 
 Gate:
 
-- existing six tests still pass
+- the full automated suite passes
 - current output remains reproducible
 - Blender starts in background mode, respects the JSON boundary, and completes a low-resolution render
 - the selected render engine and benchmark evidence are recorded in the render configuration
 
-### Phase 1 — Plan v2 and coordinate conversion (implemented)
+### Phase 1 — Plan v2 and coordinate conversion (substantially implemented; true calibration pending)
 
 Work:
 
@@ -774,13 +788,13 @@ Gate:
 - calibration confidence, component residuals, heading disagreement, and post-gap residuals are present and testable
 - an appearance-signature conflict prevents a crossing-track merge even when the spatial match is plausible
 
-### Phase 2 — Single-frame Blender scene (implemented and visually reviewed)
+### Phase 2 — Single-frame Blender scene (partial; visual gate must be repeated)
 
 Work:
 
 - build camera, ground plane, lighting, HUD, and proxy environment
-- author proxy geometry through the calibrated evidence camera with the visible backplate overlaid
-- save the proxy contract and validate its wireframe projection against visible evidence
+- author proxy geometry through the calibrated evidence camera with the visible backplate overlaid (pending)
+- save the proxy contract and validate its wireframe projection against visible evidence (pending)
 - build procedural person and vehicle meshes
 - render a single midpoint frame for one gap
 
@@ -793,11 +807,11 @@ Gate:
 
 No animation work should proceed before this visual gate.
 
-### Phase 3 — One-gap animation (implemented; final user approval gate)
+### Phase 3 — One-gap animation (partial; final user approval gate pending)
 
 Work:
 
-- add human armatures and walking cycles
+- add human armatures and walking cycles (primitive articulation exists; armatures remain pending)
 - add vehicle orientation and wheel animation driven by a C1-continuous path tangent
 - add entity lifecycles and uncertainty paths
 - apply confidence-to-fidelity tiers and the formal crowded-scene relevance score
@@ -1078,7 +1092,7 @@ Verify complete selection, plan export, Blender render, stitch, audio, and evalu
 Every Blender gap render should write:
 
 ```text
-outputs/_work/<video>/gaps/gap_XX/blender/
+outputs/jobs/<job_id>/_work/<video>_<source_sha12>/gaps/gap_XX/blender/
   plan_v2.json
   calibration_report.json
   render_config.json
@@ -1139,7 +1153,7 @@ The following decisions are approved for implementation and remain change-contro
 3. **Assets:** procedural humans and vehicles first; no downloaded asset packs.
 4. **Calibration:** allow one reviewed per-video calibration file for judge-facing inputs.
 5. **Review sequence:** one frame, then one gap, then three gaps, then one full video.
-6. **FFmpeg:** install only after plan approval to preserve audio and improve encoding.
+6. **FFmpeg:** FFmpeg and FFprobe are required runtime tools; installation is an operator action and local reconstruction must stop at preflight when either is unavailable.
 7. **Fallback:** keep the current 2.5D renderer available but never silently substitute it in a Blender judge render.
 8. **Claims:** call the output an AI-inferred forensic reconstruction, not recovered footage.
 9. **Prediction:** use pre-gap motion as the primary path estimate and post-gap observations only as soft consistency checks.
@@ -1155,7 +1169,8 @@ Provide one clean local interface that a judge or operator can use without termi
 
 - support browsing and drag-and-drop upload
 - accept common video containers: MP4, MOV, AVI, MKV, M4V, WebM, MPEG/MPG, and WMV
-- sanitize filenames, reject unsupported extensions, enforce a configured upload-size limit, and validate that OpenCV can read the uploaded video before queueing expensive work
+- sanitize filenames, reject unsupported extensions, enforce upload size/transfer bounds, validate finite media metadata, and reject sources over 10 minutes, 120 fps, a 4096-pixel side, or a 3840×2160 total-pixel budget before queueing expensive work
+- require even dimensions and constant frame rate for the frame-indexed H.264 pipeline; fail cleanly rather than silently changing timing or geometry
 - store each upload and its output in a unique job directory so repeated filenames cannot overwrite one another
 - process one reconstruction job at a time by default because detection and rendering are CPU/GPU intensive
 
@@ -1166,6 +1181,7 @@ Provide one clean local interface that a judge or operator can use without termi
 - show elapsed time and a clearly labeled best-effort ETA derived from observed progress; count it down between pipeline updates and switch to `recalculating` when an in-flight task exceeds the latest estimate
 - provide an expandable live-activity panel per job with completed, active, and pending stages, per-stage percentage, timestamps, and recent persisted pipeline messages
 - stream Blender frame markers from every active worker into aggregate render progress so a long individual gap does not leave the percentage visually frozen
+- treat the Blender safety timeout as an inactivity threshold that resets on every frame marker, never as a fixed total render-duration limit
 - open the live-activity panel automatically for a newly submitted reconstruction
 - poll local job state without reloading the page and preserve completed job metadata across server restarts
 - surface clean errors in the UI while retaining detailed local logs
@@ -1199,7 +1215,7 @@ GET    /api/outputs/<job_id>
 DELETE /api/jobs/<job_id>
 ```
 
-Video responses must support HTTP range requests so browser seeking works. The UI and API bind to `127.0.0.1` by default and add no network service or frontend framework dependency.
+Video responses must support bounded HTTP range requests so browser seeking works. The UI/API bind only to loopback, validate the Host header, permit one active upload, close stalled request sockets during shutdown, and use a project lock to prevent two local servers from mutating the same jobs. They add no network service or frontend framework dependency.
 
 ### UI acceptance gate
 
@@ -1221,15 +1237,17 @@ The cloud path uses one checked-in `colab/reconstruction.ipynb` as its operator 
 
 The notebook must:
 
-- refuse to start expensive work when Colab has not assigned an NVIDIA GPU
+- refuse to start expensive work when Colab has not assigned an NVIDIA GPU or PyTorch cannot use CUDA
+- report Blender's graphics vendor/renderer separately instead of assuming Eevee uses NVIDIA through Xvfb
 - install the pinned Blender 4.5 LTS binary, project Python requirements, and FFmpeg inside the ephemeral runtime
 - process from `/content` instead of directly against mounted Drive
-- accept one validated common-format video and derive a content-based run identifier
+- accept one validated common-format video and derive a run identifier from video content, seed, effective configuration, Git commit, and Blender version
 - show live stage, detail, and aggregate progress emitted by the shared pipeline
-- default to two Blender gap workers on a single Colab GPU and expose a one-worker fallback for memory pressure
-- copy only complete Blender gap artifacts to Google Drive from a background checkpoint watcher
+- default to one Blender gap worker until a runtime-specific benchmark proves that additional workers improve throughput
+- allow four hours without a Blender frame marker in Colab while permitting renders that continue making progress to run beyond that duration
+- copy only complete Blender gap artifacts to Google Drive through temporary checkpoint directories, and reuse them only when plan/render contracts match
 - restore compatible completed-gap checkpoints when the same video and deterministic seed are rerun
-- save the final video and JSON reports to Google Drive before offering preview and download
+- save the final video and JSON reports to Google Drive before offering download; skip inline embedding for results over 80 MB
 - clearly state that Colab resources and runtime duration are not guaranteed
 
-The notebook does not start `app.py`, expose a tunnel, or replace the local judge-facing browser UI. Its purpose is batch GPU execution with durable outputs while preserving the same evidence and rendering contracts.
+The notebook does not start `app.py`, expose a tunnel, or replace the local judge-facing browser UI. Its purpose is durable cloud batch execution with CUDA-accelerated YOLO and explicitly reported Blender device behavior while preserving the same evidence and rendering contracts.

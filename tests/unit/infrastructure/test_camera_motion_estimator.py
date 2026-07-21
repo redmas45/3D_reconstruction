@@ -18,7 +18,8 @@ class CameraMotionEstimatorTests(unittest.TestCase):
     def test_classifies_translation_above_threshold_as_dynamic(self) -> None:
         report = summarize_camera_motion([_pair_report(1.2, 0.01, 0.0001)], 1)
 
-        self.assertEqual("stabilized_dynamic_camera", report["classification"])
+        self.assertEqual("dynamic_camera", report["classification"])
+        self.assertFalse(report["render_transform_available"])
 
     def test_no_measurements_remain_unclassified(self) -> None:
         report = summarize_camera_motion([], 4)

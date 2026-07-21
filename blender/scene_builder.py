@@ -46,8 +46,8 @@ def clear_scene() -> None:
 def configure_render(scene: bpy.types.Scene, plan: dict) -> None:
     render_contract = plan.get("render", {})
     scene.render.engine = render_contract.get("engine", "BLENDER_EEVEE_NEXT")
-    scene.render.resolution_x = 1280
-    scene.render.resolution_y = 720
+    scene.render.resolution_x = int(render_contract["source_width"])
+    scene.render.resolution_y = int(render_contract["source_height"])
     scene.render.resolution_percentage = int(
         render_contract.get("preview_scale_percent", DEFAULT_RENDER_SCALE_PERCENT)
     )

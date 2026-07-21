@@ -23,6 +23,13 @@ def detection(frame: int, segment: int, source_id: int, x: int, appearance_index
     }
 
 
+def blended_detection(
+    frame: int, segment: int, source_id: int, x: int, appearance: list[float],
+) -> dict:
+    item = detection(frame, segment, source_id, x, 0)
+    return {**item, "appearance": appearance}
+
+
 class SceneIntelligenceTests(unittest.TestCase):
     def test_appearance_keeps_people_distinct_across_multiple_gaps(self) -> None:
         detections = []
@@ -61,6 +68,26 @@ class SceneIntelligenceTests(unittest.TestCase):
         self.assertEqual("left", right_origin_track["direction"])
         self.assertGreater(left_origin_track["last_bbox"][0], left_origin_track["first_bbox"][0])
         self.assertLess(right_origin_track["last_bbox"][0], right_origin_track["first_bbox"][0])
+
+    def test_gradual_pairwise_matches_cannot_bridge_conflicting_appearances(self) -> None:
+        first_appearance = [1.0, 0.0] + [0.0] * 30
+        middle_appearance = [0.7, 0.7] + [0.0] * 30
+        last_appearance = [0.0, 1.0] + [0.0] * 30
+        detections = []
+        for segment, base_frame, appearance in (
+            (0, 0, first_appearance),
+            (1, 20, middle_appearance),
+            (2, 40, last_appearance),
+        ):
+            detections.extend([
+                blended_detection(base_frame, segment, 1, 20 + segment * 4, appearance),
+                blended_detection(base_frame + 2, segment, 1, 22 + segment * 4, appearance),
+            ])
+
+        tracks = build_tracks(detections, fps=30.0)
+
+        self.assertEqual(2, len(tracks))
+        self.assertEqual([2, 4], sorted(track["frames_seen"] for track in tracks))
 
 
 if __name__ == "__main__":

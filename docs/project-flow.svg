@@ -163,7 +163,7 @@
     <text class="file" x="24" y="230">blender/scene_builder.py</text>
     <text class="small" x="24" y="253">environment_builder.py · human_builder.py · vehicle_builder.py</text>
     <text class="small" x="24" y="275">animation.py · materials.py · hud.py · frame_rate.py</text>
-    <text class="body" x="24" y="304">Builds forensic city geometry, entities, motion, lighting, confidence HUD, and exact FPS.</text>
+    <text class="body" x="24" y="304">Builds evidence-supported neutral/street geometry, motion, lighting, confidence HUD, and exact FPS.</text>
   </g>
 
   <g transform="translate(65 1080)">

@@ -28,7 +28,7 @@ const PIPELINE_STEPS = Object.freeze([
   { stage: "preparing", label: "Prepare boundary evidence", start: 0.06, end: 0.13 },
   { stage: "detecting", label: "Detect and track entities", start: 0.13, end: 0.5 },
   { stage: "planning", label: "Build forensic 3D plans", start: 0.5, end: 0.55 },
-  { stage: "rendering", label: "Render gaps with 3 workers", start: 0.55, end: 0.85 },
+  { stage: "rendering", label: "Render inferred gaps", start: 0.55, end: 0.85 },
   { stage: "evaluating", label: "Evaluate inferred gaps", start: 0.85, end: 0.94 },
   { stage: "stitching", label: "Stitch video and audio", start: 0.94, end: 1 },
 ]);
@@ -67,6 +67,10 @@ let deleteJobId = null;
 let toastTimer = null;
 /** @type {Set<string>} */
 const expandedJobLogs = new Set();
+/** @type {Map<string, {outputUrl: string, card: HTMLElement}>} */
+const outputCardsByJobId = new Map();
+let jobsRequestInFlight = false;
+let followUpJobsRefreshNeeded = false;
 
 /** @param {string} selector @returns {Element} */
 function requiredElement(selector) {
@@ -111,6 +115,7 @@ function showToast(message, isError = false) {
 function setSelectedFile(file) {
   const extension = extractFileExtension(file.name);
   if (!SUPPORTED_EXTENSIONS.has(extension)) {
+    clearSelectedFile();
     showToast("Choose a supported video: MP4, MOV, AVI, MKV, M4V, WebM, MPEG, MPG or WMV.", true);
     return;
   }
@@ -134,6 +139,7 @@ function clearSelectedFile() {
 async function uploadVideo() {
   if (!selectedVideo) return;
   elements.startButton.disabled = true;
+  resetUploadProgress();
   elements.uploadProgress.classList.remove("hidden");
   try {
     const rendererMode = elements.rendererMode.value === "2d" ? "2d" : "blender";
@@ -150,7 +156,14 @@ async function uploadVideo() {
     elements.startButton.disabled = false;
   } finally {
     elements.uploadProgress.classList.add("hidden");
+    resetUploadProgress();
   }
+}
+
+/** @returns {void} */
+function resetUploadProgress() {
+  elements.uploadPercentage.textContent = "0%";
+  elements.uploadBar.style.width = "0%";
 }
 
 /** @param {string} tag @param {string} [className] @param {string|null} [text] @returns {HTMLElement} */
@@ -163,28 +176,33 @@ function createElement(tag, className, text) {
 
 /** @param {import("./api-client.js").ProcessingJob[]} jobs @returns {void} */
 function renderJobs(jobs) {
-  const activeJobs = jobs.filter((job) => job.status !== "completed");
+  const activeJobs = jobs.filter((job) => job.status !== "completed" || !job.output_url);
   elements.jobList.replaceChildren(...activeJobs.map(createJobCard));
   elements.jobsEmpty.classList.toggle("hidden", activeJobs.length > 0);
 
   const outputs = jobs.filter((job) => job.status === "completed" && job.output_url);
-  elements.outputGrid.replaceChildren(...outputs.map(createOutputCard));
+  renderOutputCards(outputs);
   elements.outputsEmpty.classList.toggle("hidden", outputs.length > 0);
   elements.outputCount.textContent = `${outputs.length} ${outputs.length === 1 ? "output" : "outputs"}`;
 }
 
 /** @param {import("./api-client.js").ProcessingJob} job @returns {HTMLElement} */
 function createJobCard(job) {
-  const terminalClass = ["failed", "cancelled"].includes(job.status) ? job.status : "";
+  const outputIsMissing = job.status === "completed" && !job.output_url;
+  const terminalClass = outputIsMissing ? "failed" : (["failed", "cancelled"].includes(job.status) ? job.status : "");
   const card = createElement("article", `job-card ${terminalClass}`);
   card.append(createElement("span", "job-spinner"));
   const main = createElement("div", "job-main");
   const titleRow = createElement("div", "job-title-row");
   titleRow.append(createElement("strong", "", job.source_name));
-  titleRow.append(createElement("span", "stage-badge", STAGE_LABELS[job.stage] || job.stage));
+  const stageLabel = outputIsMissing ? "Output unavailable" : (STAGE_LABELS[job.stage] || job.stage);
+  titleRow.append(createElement("span", "stage-badge", stageLabel));
   main.append(titleRow);
   main.append(createElement("span", "renderer-badge", job.renderer_mode === "blender" ? "Blender 3D" : "2.5D fallback"));
-  main.append(createElement("p", `job-detail ${job.error ? "job-error" : ""}`, job.error || job.detail));
+  const detail = outputIsMissing
+    ? "Processing completed, but the output file is unavailable. Remove this record and run it again."
+    : (job.error || job.detail);
+  main.append(createElement("p", `job-detail ${job.error || outputIsMissing ? "job-error" : ""}`, detail));
   const track = createElement("div", "progress-track");
   const bar = createElement("span");
   bar.style.width = `${Math.round(job.progress * 100)}%`;
@@ -246,9 +264,16 @@ function createPipelineSteps(job) {
 /**
  * @param {{stage: string, start: number, end: number}} definition
  * @param {import("./api-client.js").ProcessingJob} job
- * @returns {"completed"|"active"|"pending"}
+ * @returns {"completed"|"active"|"pending"|"failed"|"stopped"}
  */
 function pipelineStepState(definition, job) {
+  const terminalState = job.status === "failed" ? "failed" : (job.status === "cancelled" ? "stopped" : null);
+  if (terminalState != null) {
+    if (job.stage === definition.stage) return terminalState;
+    if (job.progress >= definition.end) return "completed";
+    if (job.progress >= definition.start) return terminalState;
+    return "pending";
+  }
   if (job.stage === definition.stage) return "active";
   if (job.progress >= definition.end) return "completed";
   if (job.progress > definition.start) return "active";
@@ -258,12 +283,14 @@ function pipelineStepState(definition, job) {
 /**
  * @param {{start: number, end: number}} definition
  * @param {import("./api-client.js").ProcessingJob} job
- * @param {"completed"|"active"|"pending"} state
+ * @param {"completed"|"active"|"pending"|"failed"|"stopped"} state
  * @returns {string}
  */
 function pipelineStepLabel(definition, job, state) {
   if (state === "completed") return "Done";
   if (state === "pending") return "Pending";
+  if (state === "failed") return "Failed";
+  if (state === "stopped") return "Stopped";
   const stageRange = definition.end - definition.start;
   const localProgress = Math.min(1, Math.max(0, (job.progress - definition.start) / stageRange));
   return `${Math.round(localProgress * 100)}%`;
@@ -304,7 +331,8 @@ function createJobAction(job) {
     cancelling.disabled = true;
     return cancelling;
   }
-  if (!["failed", "cancelled"].includes(job.status)) return null;
+  const removableWithoutOutput = job.status === "completed" && !job.output_url;
+  if (!["failed", "cancelled"].includes(job.status) && !removableWithoutOutput) return null;
   const remove = /** @type {HTMLButtonElement} */ (createElement("button", "small-delete", "Remove"));
   remove.type = "button";
   remove.addEventListener("click", () => openDeleteModal(job.id));
@@ -353,14 +381,57 @@ function createOutputCard(job) {
   return card;
 }
 
+/** @param {import("./api-client.js").ProcessingJob[]} jobs @returns {void} */
+function renderOutputCards(jobs) {
+  const visibleJobIds = new Set(jobs.map((job) => job.id));
+  for (const [jobId, cached] of outputCardsByJobId) {
+    if (visibleJobIds.has(jobId)) continue;
+    cached.card.remove();
+    outputCardsByJobId.delete(jobId);
+  }
+  jobs.forEach((job, index) => placeOutputCard(job, index));
+}
+
+/** @param {import("./api-client.js").ProcessingJob} job @param {number} index @returns {void} */
+function placeOutputCard(job, index) {
+  const outputUrl = job.output_url || "";
+  let cached = outputCardsByJobId.get(job.id);
+  if (cached && cached.outputUrl !== outputUrl) {
+    cached.card.remove();
+    outputCardsByJobId.delete(job.id);
+    cached = undefined;
+  }
+  const card = cached?.card || createOutputCard(job);
+  if (!cached) outputCardsByJobId.set(job.id, { outputUrl, card });
+  const cardAtIndex = elements.outputGrid.children.item(index);
+  if (cardAtIndex !== card) elements.outputGrid.insertBefore(card, cardAtIndex);
+}
+
 async function loadJobs() {
+  if (jobsRequestInFlight) {
+    followUpJobsRefreshNeeded = true;
+    return;
+  }
+  jobsRequestInFlight = true;
   try {
     const jobs = await fetchProcessingJobs();
     elements.systemStatus.classList.remove("offline");
     renderJobs(jobs);
   } catch (error) {
     elements.systemStatus.classList.add("offline");
+  } finally {
+    jobsRequestInFlight = false;
+    if (followUpJobsRefreshNeeded) {
+      followUpJobsRefreshNeeded = false;
+      void loadJobs();
+    }
   }
+}
+
+/** @returns {Promise<void>} */
+async function pollJobs() {
+  await loadJobs();
+  window.setTimeout(pollJobs, JOB_REFRESH_INTERVAL_MILLISECONDS);
 }
 
 /** @param {string} jobId @returns {void} */
@@ -417,5 +488,4 @@ document.addEventListener("keydown", (event) => {
 });
 
 applyTheme(preferredTheme(), false);
-loadJobs();
-setInterval(loadJobs, JOB_REFRESH_INTERVAL_MILLISECONDS);
+void pollJobs();

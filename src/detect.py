@@ -5,6 +5,8 @@ import cv2
 import numpy as np
 from ultralytics import YOLO
 
+from domain.cancellation import CancellationCheck, raise_if_cancelled
+
 
 RELEVANT_COCO_CLASSES = {
     0: "person",
@@ -93,19 +95,22 @@ def _detect_range(
     frame_range: tuple[int, int],
     segment_index: int,
     settings: dict,
+    cancellation_check: CancellationCheck | None,
 ) -> tuple[list[dict], int]:
     start, end = frame_range
     capture.set(cv2.CAP_PROP_POS_FRAMES, start)
     detections: list[dict] = []
     processed_frames = 0
     for frame_index in range(start, end + 1):
+        raise_if_cancelled(cancellation_check)
         success, frame = capture.read()
         if not success:
-            break
+            raise ValueError(f"Video decoding stopped at evidence frame {frame_index}")
         if (frame_index - start) % settings["frame_stride"] != 0:
             continue
         resized, scale = _scale_frame(frame, settings["downscale_width"])
         results = model.track(resized, persist=True, verbose=False, **settings["track_args"])
+        raise_if_cancelled(cancellation_check)
         processed_frames += 1
         if not results or len(results[0].boxes) == 0:
             continue
@@ -124,10 +129,13 @@ def detect_scene_objects(
     conf: float = 0.25,
     tracker_config: str | None = None,
     progress_callback: Callable[[int, int], None] | None = None,
+    cancellation_check: CancellationCheck | None = None,
 ) -> list[dict]:
     selected_classes = class_ids or sorted(RELEVANT_COCO_CLASSES)
     print(f"[Detector] Initializing {model_name} for sequential scene tracking...")
+    raise_if_cancelled(cancellation_check)
     model = YOLO(model_name)
+    raise_if_cancelled(cancellation_check)
     capture = cv2.VideoCapture(video_path)
     if not capture.isOpened():
         raise FileNotFoundError(f"Cannot open video file: {video_path}")
@@ -143,18 +151,20 @@ def detect_scene_objects(
     detections: list[dict] = []
     processed_frames = 0
     segment_total = len(visible_ranges)
-    for segment_index, frame_range in enumerate(visible_ranges):
-        if segment_index:
-            _reset_tracker(model)
-        segment_detections, segment_frames = _detect_range(
-            model, capture, frame_range, segment_index, settings
-        )
-        detections.extend(segment_detections)
-        processed_frames += segment_frames
-        print(f"[Detector] Segment {segment_index + 1}: {segment_frames} sampled frames.")
-        if progress_callback is not None:
-            progress_callback(segment_index + 1, segment_total)
-
-    capture.release()
+    try:
+        for segment_index, frame_range in enumerate(visible_ranges):
+            raise_if_cancelled(cancellation_check)
+            if segment_index:
+                _reset_tracker(model)
+            segment_detections, segment_frames = _detect_range(
+                model, capture, frame_range, segment_index, settings, cancellation_check
+            )
+            detections.extend(segment_detections)
+            processed_frames += segment_frames
+            print(f"[Detector] Segment {segment_index + 1}: {segment_frames} sampled frames.")
+            if progress_callback is not None:
+                progress_callback(segment_index + 1, segment_total)
+    finally:
+        capture.release()
     print(f"[Detector] Finished: {len(detections)} detections from {processed_frames} sampled frames.")
     return detections

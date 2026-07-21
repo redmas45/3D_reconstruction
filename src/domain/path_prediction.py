@@ -11,6 +11,7 @@ AMBIGUOUS_HEADING_DISAGREEMENT = 100.0
 SUPPORTED_POSITION_RESIDUAL_METERS = 1.5
 PLAUSIBLE_POSITION_RESIDUAL_METERS = 3.5
 AMBIGUOUS_POSITION_RESIDUAL_METERS = 7.0
+UNMATCHED_CONTINUITY_FACTOR = 0.65
 
 
 def build_entity_prediction(
@@ -38,7 +39,9 @@ def build_entity_prediction(
         "path_prediction": {
             "method": "centripetal_catmull_rom",
             "constraint_mode": "forward_prediction" if before else "reverse_entry_prediction",
-            "post_gap_observation_role": "soft_consistency_check",
+            "post_gap_observation_role": (
+                "soft_consistency_check" if before else "entry_boundary_evidence"
+            ),
             "waypoints": world_waypoints,
         },
         "speed_meters_per_second": _path_speed(world_waypoints, hidden_range, fps),
@@ -138,18 +141,22 @@ def _boundary_evidence(
     frame_size: tuple[int, int],
     camera_contract: dict,
 ) -> dict:
-    pre_heading = _heading(_image_velocity(before)) if len(before) >= 2 else 0.0
-    post_heading = _heading(_image_velocity(after)) if len(after) >= 2 else pre_heading
-    disagreement = _angle_difference(pre_heading, post_heading)
+    pre_heading = _heading(_image_velocity(before)) if len(before) >= 2 else None
+    post_heading = _heading(_image_velocity(after)) if len(after) >= 2 else None
+    disagreement = (
+        _angle_difference(pre_heading, post_heading)
+        if pre_heading is not None and post_heading is not None
+        else 0.0
+    )
     residual = None
-    if after:
+    if before and after:
         post_point = _ground_point(after[0])
         post_world = image_point_to_world(post_point[0], post_point[1], frame_size[0], frame_size[1], camera_contract)
         residual = _distance(world_waypoints[-1]["world"], post_world)
     residual_multiplier = position_residual_confidence_multiplier(residual)
     return {
-        "pre_gap_heading_degrees": round(pre_heading, 3),
-        "post_gap_heading_degrees": round(post_heading, 3),
+        "pre_gap_heading_degrees": round(pre_heading, 3) if pre_heading is not None else None,
+        "post_gap_heading_degrees": round(post_heading, 3) if post_heading is not None else None,
         "heading_disagreement_degrees": round(disagreement, 3),
         "post_gap_position_residual_meters": round(residual, 4) if residual is not None else None,
         "post_gap_residual_confidence_multiplier": residual_multiplier,
@@ -167,7 +174,12 @@ def _prediction_confidence(
 ) -> float:
     evidence_scores = [float(item.get("confidence", 0.0)) for item in before[-1:] + after[:1]]
     evidence_score = sum(evidence_scores) / len(evidence_scores) if evidence_scores else 0.0
-    continuity_score = float(track.get("continuity_confidence", track.get("avg_confidence", 0.0)))
+    continuity_value = track.get("continuity_confidence")
+    continuity_score = (
+        float(continuity_value)
+        if continuity_value is not None
+        else float(track.get("avg_confidence", 0.0)) * UNMATCHED_CONTINUITY_FACTOR
+    )
     lifecycle_factor = {"continuous": 1.0, "enters": 0.75, "exits": 0.75, "uncertain": 0.50}[lifecycle]
     heading_factor = heading_confidence_multiplier(boundary_evidence["heading_disagreement_degrees"])
     residual_factor = float(boundary_evidence["post_gap_residual_confidence_multiplier"])

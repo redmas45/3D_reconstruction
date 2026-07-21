@@ -5,6 +5,8 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+from domain.cancellation import CancellationCheck, raise_if_cancelled
+
 
 DEFAULT_PLATE_SAMPLES = 9
 DEFAULT_PLATE_WINDOW_SECONDS = 0.75
@@ -300,6 +302,7 @@ def render_evidence_reconstruction(
     height: int,
     fps: float,
     visual_config: dict | None = None,
+    cancellation_check: CancellationCheck | None = None,
 ) -> None:
     settings = visual_config or {}
     hidden_start = int(plan["hidden_range"]["start"])
@@ -326,27 +329,41 @@ def render_evidence_reconstruction(
     assets = _entity_assets(video_path, entities)
     path_maps = {entity["id"]: {item["frame"]: item for item in entity["path"]} for entity in entities}
     writer = cv2.VideoWriter(output_path, cv2.VideoWriter_fourcc(*"mp4v"), fps, (width, height))
+    if not writer.isOpened():
+        raise OSError(f"Cannot create inferred gap video: {Path(output_path).name}")
     total_frames = hidden_end - hidden_start + 1
     transition_frames = int(round(settings.get("transition_seconds", DEFAULT_TRANSITION_SECONDS) * fps))
-    for frame_number in range(hidden_start, hidden_end + 1):
-        frame_offset = frame_number - hidden_start
-        progress = frame_offset / max(1, total_frames - 1)
-        frame = cv2.addWeighted(after_plate, progress, before_plate, 1.0 - progress, 0)
-        _draw_uncertainty(frame, entities, settings.get("show_uncertainty_paths", True))
-        ordered = sorted(entities, key=lambda item: path_maps[item["id"]][frame_number]["bbox"][3])
-        for entity in ordered:
-            point = path_maps[entity["id"]][frame_number]
-            bbox = point["bbox"]
-            target_width = max(2, bbox[2] - bbox[0])
-            target_height = max(2, bbox[3] - bbox[1])
-            asset = _selected_asset(assets[entity["id"]], target_width, target_height)
-            if asset is None:
-                continue
-            opacity = float(point["opacity"]) * min(1.0, 0.90 + entity["confidence"] * 0.10)
-            _draw_shadow(frame, bbox, opacity)
-            _paste_asset(frame, asset, bbox, opacity)
-        frame = _boundary_blend(frame, before_boundary, after_boundary, frame_offset, total_frames, transition_frames)
-        _draw_inference_hud(frame, plan.get("overall_confidence", 0.0), total_frames / fps, settings.get("hud_opacity", 0.46))
-        writer.write(frame)
-    writer.release()
-    Path(output_path).touch(exist_ok=True)
+    try:
+        for frame_number in range(hidden_start, hidden_end + 1):
+            raise_if_cancelled(cancellation_check)
+            frame_offset = frame_number - hidden_start
+            progress = frame_offset / max(1, total_frames - 1)
+            frame = cv2.addWeighted(after_plate, progress, before_plate, 1.0 - progress, 0)
+            _draw_uncertainty(frame, entities, settings.get("show_uncertainty_paths", True))
+            ordered = sorted(entities, key=lambda item: path_maps[item["id"]][frame_number]["bbox"][3])
+            for entity in ordered:
+                point = path_maps[entity["id"]][frame_number]
+                bbox = point["bbox"]
+                target_width = max(2, bbox[2] - bbox[0])
+                target_height = max(2, bbox[3] - bbox[1])
+                asset = _selected_asset(assets[entity["id"]], target_width, target_height)
+                if asset is None:
+                    continue
+                opacity = float(point["opacity"]) * min(1.0, 0.90 + entity["confidence"] * 0.10)
+                _draw_shadow(frame, bbox, opacity)
+                _paste_asset(frame, asset, bbox, opacity)
+            frame = _boundary_blend(
+                frame, before_boundary, after_boundary, frame_offset, total_frames, transition_frames
+            )
+            _draw_inference_hud(
+                frame,
+                plan.get("overall_confidence", 0.0),
+                total_frames / fps,
+                settings.get("hud_opacity", 0.46),
+            )
+            writer.write(frame)
+    finally:
+        writer.release()
+    rendered_path = Path(output_path)
+    if not rendered_path.is_file() or rendered_path.stat().st_size == 0:
+        raise OSError(f"Inferred gap video was not written: {rendered_path.name}")

@@ -28,7 +28,7 @@ def _build_header(plan: dict, camera: bpy.types.Object) -> None:
         0.16 * OVERLAY_SCALE,
     )
     confidence_text = _camera_text(
-        f"SCENE {confidence:.0%}  |  CALIBRATION {calibration:.0%}  |  INFERRED, NOT GROUND TRUTH",
+        f"SCENE {confidence:.0%}  |  CAMERA PRIOR {calibration:.0%}  |  INFERRED, NOT GROUND TRUTH",
         camera,
         _overlay_location(-3.45, -1.86),
         0.115 * OVERLAY_SCALE,

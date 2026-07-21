@@ -8,6 +8,7 @@ from domain.path_prediction import build_entity_prediction, fidelity_tier
 PLAN_SCHEMA_VERSION = 2
 PLAN_STRATEGY = "ai_inferred_forensic_3d"
 RENDERABLE_CLASSES = {"person", "car", "truck", "bus", "motorcycle", "bicycle"}
+VEHICLE_CLASSES = {"car", "truck", "bus", "motorcycle", "bicycle"}
 DEFAULT_MAX_RENDER_ENTITIES = 12
 MINIMUM_PRESENTATION_CONFIDENCE = 0.40
 MINIMUM_PRESENTATION_RELEVANCE = 0.10
@@ -36,10 +37,9 @@ def build_reconstruction_plan_v2(
 ) -> dict:
     video = scene_report["video"]
     camera = build_camera_contract(scene_report)
-    candidate_ids = set(scene_report.get("likely_gap_entities", {}).get(str(gap_index), []))
     candidates = [
         track for track in scene_report.get("tracks", [])
-        if track.get("class_name") in RENDERABLE_CLASSES and (not candidate_ids or track.get("id") in candidate_ids)
+        if track.get("class_name") in RENDERABLE_CLASSES
     ]
     entities = _planned_entities(candidates, identity_registry, hidden_range, video, camera)
     selected_entities = _select_presentation_entities(entities, maximum_entities)
@@ -73,8 +73,10 @@ def _plan_contract(
         "duration_seconds": round(frame_count / float(video["fps"]), 4),
         "overall_confidence": _overall_confidence(selected_entities, camera),
         "camera": camera,
-        "environment": _environment_contract(hidden_range[0] - 1, context_frame_path),
-        "render": _render_contract(render_configuration),
+        "environment": _environment_contract(
+            hidden_range[0] - 1, context_frame_path, selected_entities,
+        ),
+        "render": _render_contract(render_configuration, video),
         "identity_registry": {
             "schema_version": identity_registry["schema_version"],
             "generator_version": identity_registry["generator_version"],
@@ -84,7 +86,14 @@ def _plan_contract(
     }
 
 
-def _environment_contract(backplate_frame: int, context_frame_path: Path | None) -> dict:
+def _environment_contract(
+    backplate_frame: int,
+    context_frame_path: Path | None,
+    rendered_entities: list[dict],
+) -> dict:
+    proxy_profile = "street" if any(
+        entity.get("kind") in VEHICLE_CLASSES for entity in rendered_entities
+    ) else "neutral"
     return {
         "style": "forensic_3d",
         "ground_color": [0.035, 0.047, 0.062],
@@ -93,6 +102,7 @@ def _environment_contract(backplate_frame: int, context_frame_path: Path | None)
         "context_frame_path": str(context_frame_path.resolve()) if context_frame_path else None,
         "presentation_mode": True,
         "show_debug_paths": False,
+        "proxy_profile": proxy_profile,
     }
 
 
@@ -118,7 +128,7 @@ def _selection_report(entities: list[dict], selected_entities: list[dict]) -> di
     }
 
 
-def _render_contract(render_configuration: dict | None) -> dict:
+def _render_contract(render_configuration: dict | None, video: dict) -> dict:
     configured = render_configuration or {}
     return {
         "engine": str(configured.get("engine", DEFAULT_RENDER_CONFIGURATION["engine"])),
@@ -128,6 +138,8 @@ def _render_contract(render_configuration: dict | None) -> dict:
         "production_scale_percent": int(configured.get(
             "production_scale_percent", DEFAULT_RENDER_CONFIGURATION["production_scale_percent"]
         )),
+        "source_width": int(video["width"]),
+        "source_height": int(video["height"]),
     }
 
 
@@ -149,6 +161,7 @@ def validate_reconstruction_plan_v2(plan: dict) -> None:
         raise PlanValidationError("Plan strategy is unsupported")
     if not isinstance(plan.get("camera"), dict) or not 0.0 <= plan["camera"].get("calibration_confidence", -1.0) <= 1.0:
         raise PlanValidationError("Camera calibration confidence is invalid")
+    _validate_render_contract(plan.get("render"))
     entities = plan.get("entities")
     if not isinstance(entities, list):
         raise PlanValidationError("Plan entities must be a list")
@@ -179,13 +192,22 @@ def _planned_entities(
         identity = identities.get(track["id"])
         if prediction is None or identity is None:
             continue
-        entities.append(_entity_contract(track, identity, prediction, video, camera))
+        entities.append(_entity_contract(track, identity, prediction, video, camera, hidden_range))
     return entities
 
 
-def _entity_contract(track: dict, identity: dict, prediction: dict, video: dict, camera: dict) -> dict:
+def _entity_contract(
+    track: dict,
+    identity: dict,
+    prediction: dict,
+    video: dict,
+    camera: dict,
+    hidden_range: tuple[int, int],
+) -> dict:
     confidence = prediction["confidence"]
-    relevance_score = _relevance_score(track, prediction["lifecycle"], confidence, video)
+    relevance_score = _relevance_score(
+        track, prediction["lifecycle"], confidence, video, hidden_range,
+    )
     speed = prediction["speed_meters_per_second"]
     return {
         "id": track["id"],
@@ -212,15 +234,53 @@ def _entity_contract(track: dict, identity: dict, prediction: dict, video: dict,
     }
 
 
-def _relevance_score(track: dict, lifecycle: str, confidence: float, video: dict) -> float:
-    detection = track.get("detections", [])[-1:] or [{"bbox": track.get("last_bbox", [0, 0, 1, 1])}]
-    x1, y1, x2, y2 = detection[0]["bbox"]
+def _relevance_score(
+    track: dict,
+    lifecycle: str,
+    confidence: float,
+    video: dict,
+    hidden_range: tuple[int, int],
+) -> float:
+    detection = _closest_boundary_detection(track, hidden_range)
+    x1, y1, x2, y2 = detection["bbox"]
     frame_area = max(1.0, float(video["width"] * video["height"]))
     screen_area = max(1.0, float((x2 - x1) * (y2 - y1)))
     screen_size_factor = max(0.25, min(1.0, (screen_area / frame_area) ** 0.5 * 4.0))
     proximity_factor = max(0.50, min(1.0, 0.50 + 0.50 * y2 / float(video["height"])))
     lifecycle_factor = LIFECYCLE_FACTORS.get(lifecycle, LIFECYCLE_FACTORS["uncertain"])
     return round(confidence * proximity_factor * screen_size_factor * lifecycle_factor, 6)
+
+
+def _closest_boundary_detection(track: dict, hidden_range: tuple[int, int]) -> dict:
+    hidden_start, hidden_end = hidden_range
+    visible_detections = [
+        item for item in track.get("detections", [])
+        if int(item.get("frame", hidden_start)) < hidden_start
+        or int(item.get("frame", hidden_end)) > hidden_end
+    ]
+    if not visible_detections:
+        return {"bbox": track.get("last_bbox", [0, 0, 1, 1])}
+
+    def distance_to_gap(detection: dict) -> int:
+        frame_index = int(detection["frame"])
+        boundary = hidden_start if frame_index < hidden_start else hidden_end
+        return abs(frame_index - boundary)
+
+    return min(visible_detections, key=distance_to_gap)
+
+
+def _validate_render_contract(value: object) -> None:
+    if not isinstance(value, dict):
+        raise PlanValidationError("Plan render contract must be an object")
+    if not isinstance(value.get("engine"), str) or not value["engine"].strip():
+        raise PlanValidationError("Render engine must be a non-empty string")
+    integer_fields = (
+        "preview_scale_percent", "production_scale_percent", "source_width", "source_height",
+    )
+    for field_name in integer_fields:
+        field_value = value.get(field_name)
+        if isinstance(field_value, bool) or not isinstance(field_value, int) or field_value <= 0:
+            raise PlanValidationError(f"Render {field_name} must be a positive integer")
 
 
 def _overall_confidence(entities: list[dict], camera: dict) -> float:

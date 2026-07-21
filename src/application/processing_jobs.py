@@ -5,14 +5,16 @@ import json
 import logging
 import random
 import shutil
+import stat
 import threading
 import time
 import uuid
-from concurrent.futures import Future, ThreadPoolExecutor
+from concurrent.futures import CancelledError, Future, ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import BinaryIO, Callable
 
+from application.processing_job_view import build_public_job_record, estimate_eta
 from application.reconstruction_pipeline import PipelineOptions, ProgressCallback, process_video, video_info
 from domain.cancellation import CancellationRequestedError, raise_if_cancelled
 from domain.processing_job import (
@@ -31,12 +33,22 @@ from domain.video_upload import (
     UploadValidationError,
     validate_upload_metadata,
 )
+from gap_selector import choose_hidden_gaps
+from infrastructure.job_metadata_store import JobMetadataStore, replace_metadata_file as _replace_metadata_file
+from infrastructure.blender_runner import BlenderRenderError, BlenderUnavailableError
+from infrastructure.media_tools import (
+    MediaProcessingError,
+    MediaToolUnavailableError,
+    UnsupportedVideoTimingError,
+)
 
 
 LOGGER = logging.getLogger(__name__)
 Processor = Callable[[Path, PipelineOptions, random.Random, ProgressCallback | None], Path]
-METADATA_REPLACE_ATTEMPTS = 8
-METADATA_RETRY_BASE_SECONDS = 0.05
+PUBLIC_FAILURE_MESSAGE_LIMIT = 240
+GENERIC_FAILURE_MESSAGE = "Reconstruction failed. Check the server log for details."
+INCOMPLETE_UPLOAD_MARKER = ".upload_incomplete"
+MAXIMUM_UPLOAD_TRANSFER_SECONDS = 1_800
 
 
 class JobNotFoundError(LookupError):
@@ -69,8 +81,10 @@ class JobManager:
         self._futures: dict[str, Future[None]] = {}
         self._cancellation_events: dict[str, threading.Event] = {}
         self._lock = threading.RLock()
+        self._metadata_store = JobMetadataStore()
         self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="reconstruction")
         self._load_existing_jobs()
+        self._remove_incomplete_uploads()
         self._load_legacy_outputs()
 
     def create_job(
@@ -79,21 +93,30 @@ class JobManager:
         reader: BinaryIO,
         content_length: int,
         renderer_mode: str = "blender",
-    ) -> dict:
+    ) -> dict[str, object]:
         safe_name = validate_upload_metadata(source_name, content_length, self.max_upload_bytes)
         renderer_mode = validate_renderer_mode(renderer_mode)
         job_id = uuid.uuid4().hex
         input_dir = self.upload_root / job_id
         output_dir = self.output_root / job_id
         input_path = input_dir / safe_name
-        input_dir.mkdir(parents=True, exist_ok=False)
-        output_dir.mkdir(parents=True, exist_ok=False)
         try:
+            input_dir.mkdir(parents=True, exist_ok=False)
+            (input_dir / INCOMPLETE_UPLOAD_MARKER).touch()
+            output_dir.mkdir(parents=True, exist_ok=False)
             self._write_upload(reader, input_path, content_length)
-            video_info(input_path)
-        except (OSError, ValueError) as error:
+            input_video_info = video_info(input_path)
+            _validate_gap_policy(input_video_info, self.config_data)
+        except UploadValidationError:
+            self._remove_job_directories(input_dir, output_dir)
+            raise
+        except ValueError as error:
             self._remove_job_directories(input_dir, output_dir)
             raise UploadValidationError(str(error)) from error
+        except OSError as error:
+            self._remove_job_directories(input_dir, output_dir)
+            LOGGER.exception("Could not save or validate uploaded video %s", safe_name)
+            raise UploadValidationError("The uploaded video could not be saved or decoded") from error
         record = ProcessingJob(
             job_id=job_id,
             source_name=safe_name,
@@ -102,20 +125,28 @@ class JobManager:
             created_at=utc_now(),
             renderer_mode=renderer_mode,
         )
-        with self._lock:
-            self._jobs[job_id] = record
-            self._cancellation_events[job_id] = threading.Event()
-            self._record_activity(record)
-            self._persist(record)
-            self._futures[job_id] = self._executor.submit(self._execute, job_id)
-            return self._public_record(record)
+        try:
+            with self._lock:
+                self._jobs[job_id] = record
+                self._cancellation_events[job_id] = threading.Event()
+                self._record_activity(record)
+                self._persist(record, force=True)
+                (input_dir / INCOMPLETE_UPLOAD_MARKER).unlink(missing_ok=True)
+                future = self._executor.submit(self._execute, job_id)
+                self._futures[job_id] = future
+                future.add_done_callback(lambda completed: self._observe_future(job_id, completed))
+                return self._public_record(record)
+        except Exception:
+            LOGGER.exception("Failed to queue reconstruction job %s for %s", job_id, safe_name)
+            self._rollback_job_creation(job_id, input_dir, output_dir)
+            raise
 
-    def list_jobs(self) -> list[dict]:
+    def list_jobs(self) -> list[dict[str, object]]:
         with self._lock:
             records = sorted(self._jobs.values(), key=lambda item: item.created_at, reverse=True)
             return [self._public_record(record) for record in records]
 
-    def get_job(self, job_id: str) -> dict:
+    def get_job(self, job_id: str) -> dict[str, object]:
         with self._lock:
             return self._public_record(self._require_job(job_id))
 
@@ -141,8 +172,9 @@ class JobManager:
             self._jobs.pop(job_id, None)
             self._futures.pop(job_id, None)
             self._cancellation_events.pop(job_id, None)
+            self._metadata_store.forget(job_id)
 
-    def cancel_job(self, job_id: str) -> dict:
+    def cancel_job(self, job_id: str) -> dict[str, object]:
         with self._lock:
             record = self._require_job(job_id)
             if record.status not in {JobStatus.QUEUED, JobStatus.PROCESSING}:
@@ -165,12 +197,15 @@ class JobManager:
         with self._lock:
             for cancellation_event in self._cancellation_events.values():
                 cancellation_event.set()
-        self._executor.shutdown(wait=False, cancel_futures=False)
+        self._executor.shutdown(wait=True, cancel_futures=False)
 
     def _write_upload(self, reader: BinaryIO, input_path: Path, content_length: int) -> None:
         remaining = content_length
+        deadline = time.monotonic() + MAXIMUM_UPLOAD_TRANSFER_SECONDS
         with input_path.open("wb") as output_file:
             while remaining:
+                if time.monotonic() >= deadline:
+                    raise UploadValidationError("The upload exceeded the allowed transfer time")
                 chunk = reader.read(min(remaining, UPLOAD_CHUNK_BYTES))
                 if not chunk:
                     raise UploadValidationError("Upload ended before the declared file size")
@@ -178,21 +213,58 @@ class JobManager:
                 remaining -= len(chunk)
 
     def _execute(self, job_id: str) -> None:
-        started_job = self._begin_job(job_id)
-        if started_job is None:
-            return
-        record, cancellation_event = started_job
         try:
+            started_job = self._begin_job(job_id)
+            if started_job is None:
+                return
+            record, cancellation_event = started_job
             output_path = self._run_processor(job_id, record, cancellation_event)
+            self._complete_job(job_id, output_path)
         except CancellationRequestedError:
             LOGGER.info("Reconstruction job %s was cancelled", job_id)
-            self._cancel_running_job(job_id)
-            return
+            self._settle_cancelled(job_id)
         except Exception as error:
-            LOGGER.exception("Reconstruction job %s failed for %s", job_id, record.source_name)
-            self._fail_job(job_id, str(error) or error.__class__.__name__)
-            raise
-        self._complete_job(job_id, output_path)
+            if self._cancellation_requested(job_id):
+                LOGGER.exception("Reconstruction job %s encountered an error while cancelling", job_id)
+                self._settle_cancelled(job_id)
+                return
+            LOGGER.exception("Reconstruction job %s failed", job_id)
+            self._settle_failed(job_id, _public_failure_message(error))
+
+    def _settle_cancelled(self, job_id: str) -> None:
+        try:
+            self._cancel_running_job(job_id)
+        except Exception:
+            LOGGER.exception("Failed to persist cancellation for reconstruction job %s", job_id)
+
+    def _settle_failed(self, job_id: str, message: str) -> None:
+        try:
+            self._fail_job(job_id, message)
+        except Exception:
+            LOGGER.exception("Failed to persist failure for reconstruction job %s", job_id)
+
+    def _cancellation_requested(self, job_id: str) -> bool:
+        with self._lock:
+            cancellation_event = self._cancellation_events.get(job_id)
+            record = self._jobs.get(job_id)
+            event_is_set = cancellation_event is not None and cancellation_event.is_set()
+            status_is_cancelling = record is not None and record.status is JobStatus.CANCELLING
+            return event_is_set or status_is_cancelling
+
+    def _observe_future(self, job_id: str, future: Future[None]) -> None:
+        try:
+            escaped_error = future.exception()
+        except CancelledError:
+            escaped_error = None
+        if escaped_error is not None:
+            LOGGER.error(
+                "Unhandled worker error escaped reconstruction job %s",
+                job_id,
+                exc_info=(type(escaped_error), escaped_error, escaped_error.__traceback__),
+            )
+        with self._lock:
+            if self._futures.get(job_id) is future:
+                self._futures.pop(job_id, None)
 
     def _begin_job(self, job_id: str) -> tuple[ProcessingJob, threading.Event] | None:
         with self._lock:
@@ -233,6 +305,18 @@ class JobManager:
         return output_path
 
     def _complete_job(self, job_id: str, output_path: Path) -> None:
+        resolved_output_path = output_path.resolve()
+        with self._lock:
+            record = self._require_job(job_id)
+            output_root = record.output_dir.resolve()
+        if output_root not in resolved_output_path.parents:
+            raise ValueError("The reconstruction worker returned an unmanaged output path")
+        try:
+            output_status = resolved_output_path.stat()
+        except OSError as error:
+            raise FileNotFoundError("The reconstruction worker did not produce an output video") from error
+        if not stat.S_ISREG(output_status.st_mode) or output_status.st_size < 1:
+            raise FileNotFoundError("The reconstruction worker did not produce an output video")
         with self._lock:
             record = self._require_job(job_id)
             if record.status is JobStatus.CANCELLING:
@@ -243,7 +327,7 @@ class JobManager:
             record.progress = 1.0
             record.detail = "Reconstruction complete"
             record.completed_at = utc_now()
-            record.output_path = output_path.resolve()
+            record.output_path = resolved_output_path
             record.eta_seconds = 0
             record.progress_updated_at = record.completed_at
             self._record_activity(record)
@@ -270,78 +354,38 @@ class JobManager:
             if record.status is JobStatus.CANCELLING:
                 raise CancellationRequestedError("Reconstruction was cancelled by the operator")
             next_progress = max(record.progress, min(0.99, progress))
+            progress_advanced = next_progress > record.progress
             record.stage = ProcessingStage(stage)
-            if next_progress > record.progress:
-                record.progress_updated_at = utc_now()
             record.progress = next_progress
+            if progress_advanced:
+                record.progress_updated_at = utc_now()
+                record.eta_seconds = self._estimate_eta(record)
             record.detail = detail
-            record.eta_seconds = self._estimate_eta(record)
             self._record_activity(record)
             self._persist(record)
 
     def _fail_job(self, job_id: str, message: str) -> None:
         with self._lock:
             record = self._require_job(job_id)
+            if self._cancellation_requested(job_id):
+                self._mark_cancelled(record)
+                return
             record.status = JobStatus.FAILED
             record.stage = ProcessingStage.FAILED
             record.detail = "Processing failed"
             record.error = message
             record.completed_at = utc_now()
+            record.output_path = None
             record.eta_seconds = None
             record.progress_updated_at = record.completed_at
             self._record_activity(record)
             self._persist(record)
 
     def _estimate_eta(self, record: ProcessingJob) -> int | None:
-        if record.started_at is None or record.progress < 0.02:
-            return None
-        started_at = datetime.fromisoformat(record.started_at)
-        elapsed_seconds = max(0.0, (datetime.now(timezone.utc) - started_at).total_seconds())
-        remaining = elapsed_seconds * (1.0 - record.progress) / record.progress
-        return max(0, int(round(remaining)))
+        return estimate_eta(record)
 
-    def _public_record(self, record: ProcessingJob) -> dict:
-        output_exists = record.output_path is not None and record.output_path.is_file()
-        elapsed_seconds = self._elapsed_seconds(record)
-        live_eta_seconds, eta_status = self._live_eta(record)
-        return {
-            "id": record.job_id,
-            "source_name": record.source_name,
-            "status": record.status.value,
-            "stage": record.stage.value,
-            "progress": round(record.progress, 4),
-            "detail": record.detail,
-            "created_at": record.created_at,
-            "completed_at": record.completed_at,
-            "elapsed_seconds": elapsed_seconds,
-            "eta_seconds": live_eta_seconds,
-            "eta_status": eta_status,
-            "activity_log": [dict(item) for item in record.activity_log],
-            "error": record.error,
-            "output_url": f"/api/outputs/{record.job_id}" if output_exists else None,
-            "download_url": f"/api/outputs/{record.job_id}?download=1" if output_exists else None,
-            "size_bytes": record.output_path.stat().st_size if output_exists else None,
-            "is_legacy_output": record.is_legacy_output,
-            "renderer_mode": record.renderer_mode,
-        }
-
-    @staticmethod
-    def _live_eta(record: ProcessingJob) -> tuple[int | None, str]:
-        if record.status is JobStatus.QUEUED:
-            return None, "waiting"
-        if record.status in {JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED}:
-            return 0, "finished"
-        if record.eta_seconds is None or record.progress_updated_at is None:
-            return None, "estimating"
-        try:
-            updated_at = datetime.fromisoformat(record.progress_updated_at)
-        except ValueError:
-            return None, "estimating"
-        estimate_age = max(0.0, (datetime.now(timezone.utc) - updated_at).total_seconds())
-        remaining_seconds = record.eta_seconds - estimate_age
-        if remaining_seconds <= 0:
-            return None, "recalibrating"
-        return int(round(remaining_seconds)), "counting_down"
+    def _public_record(self, record: ProcessingJob) -> dict[str, object]:
+        return build_public_job_record(record)
 
     def _record_activity(self, record: ProcessingJob) -> None:
         activity: JobActivity = {
@@ -355,29 +399,15 @@ class JobManager:
         record.activity_log.append(activity)
         del record.activity_log[:-MAXIMUM_STORED_ACTIVITY_ITEMS]
 
-    def _elapsed_seconds(self, record: ProcessingJob) -> int:
-        if record.started_at is None:
-            return 0
-        start = datetime.fromisoformat(record.started_at)
-        end = datetime.fromisoformat(record.completed_at) if record.completed_at else datetime.now(timezone.utc)
-        return max(0, int((end - start).total_seconds()))
-
-    def _persist(self, record: ProcessingJob) -> None:
-        metadata_path = record.output_dir / "job.json"
-        temporary_path = record.output_dir / f"job.{uuid.uuid4().hex}.tmp"
-        try:
-            with temporary_path.open("w", encoding="utf-8") as metadata_file:
-                json.dump(record.to_storage_payload(), metadata_file, indent=2)
-            _replace_metadata_file(temporary_path, metadata_path)
-        finally:
-            temporary_path.unlink(missing_ok=True)
+    def _persist(self, record: ProcessingJob, force: bool = False) -> None:
+        self._metadata_store.persist(record, force=force)
 
     def _load_existing_jobs(self) -> None:
         for metadata_path in self.output_root.glob("*/job.json"):
             try:
                 payload = json.loads(metadata_path.read_text(encoding="utf-8"))
                 record = self._record_from_storage(metadata_path.parent, payload)
-            except (OSError, ValueError, KeyError, json.JSONDecodeError):
+            except (AttributeError, OSError, TypeError, ValueError, KeyError, json.JSONDecodeError):
                 LOGGER.exception("Ignoring invalid job metadata at %s", metadata_path)
                 continue
             if record.status in {JobStatus.QUEUED, JobStatus.PROCESSING}:
@@ -396,13 +426,23 @@ class JobManager:
     def _load_legacy_outputs(self) -> None:
         if self.legacy_output_root is None or not self.legacy_output_root.exists():
             return
+        legacy_root = self.legacy_output_root.resolve()
         for output_path in self.legacy_output_root.rglob("*_reconstructed.mp4"):
-            resolved_output = output_path.resolve()
+            try:
+                resolved_output = output_path.resolve()
+                if legacy_root not in resolved_output.parents:
+                    continue
+                output_status = resolved_output.stat()
+            except OSError:
+                LOGGER.warning("Skipped a legacy output that disappeared during discovery: %s", output_path)
+                continue
             if self.output_root in resolved_output.parents or "_work" in resolved_output.parts:
                 continue
-            relative_path = resolved_output.relative_to(self.legacy_output_root)
+            if not stat.S_ISREG(output_status.st_mode) or output_status.st_size < 1:
+                continue
+            relative_path = resolved_output.relative_to(legacy_root)
             job_id = hashlib.sha256(str(relative_path).encode("utf-8")).hexdigest()[:32]
-            completed_at = datetime.fromtimestamp(resolved_output.stat().st_mtime, timezone.utc).isoformat()
+            completed_at = datetime.fromtimestamp(output_status.st_mtime, timezone.utc).isoformat()
             self._jobs[job_id] = ProcessingJob(
                 job_id=job_id,
                 source_name=resolved_output.name.replace("_reconstructed", ""),
@@ -419,6 +459,35 @@ class JobManager:
                 is_legacy_output=True,
                 renderer_mode="2d",
             )
+
+    def _remove_incomplete_uploads(self) -> None:
+        for input_directory in self.upload_root.iterdir():
+            if not input_directory.is_dir():
+                continue
+            job_id = input_directory.name
+            try:
+                validate_job_identifier(job_id)
+            except ValueError:
+                continue
+            marker_path = input_directory / INCOMPLETE_UPLOAD_MARKER
+            if job_id in self._jobs:
+                try:
+                    marker_path.unlink(missing_ok=True)
+                except OSError:
+                    LOGGER.exception("Could not clear recovered upload marker for job %s", job_id)
+                continue
+            output_directory = self.output_root / job_id
+            metadata_exists = (output_directory / "job.json").exists()
+            if metadata_exists or (not marker_path.exists() and output_directory.exists()):
+                LOGGER.error(
+                    "Preserved untracked job directories because output state may be recoverable: %s",
+                    job_id,
+                )
+                continue
+            try:
+                self._remove_job_directories(input_directory, output_directory)
+            except (OSError, ValueError):
+                LOGGER.exception("Could not remove incomplete upload for job %s", job_id)
 
     def _record_from_storage(self, output_dir: Path, payload: dict[str, object]) -> ProcessingJob:
         return ProcessingJob.from_storage_payload(self.upload_root, output_dir, payload)
@@ -437,13 +506,26 @@ class JobManager:
         self._remove_managed_tree(input_dir, self.upload_root)
         self._remove_managed_tree(output_dir, self.output_root)
 
+    def _rollback_job_creation(self, job_id: str, input_dir: Path, output_dir: Path) -> None:
+        with self._lock:
+            self._jobs.pop(job_id, None)
+            self._futures.pop(job_id, None)
+            self._cancellation_events.pop(job_id, None)
+            self._metadata_store.forget(job_id)
+        try:
+            self._remove_job_directories(input_dir, output_dir)
+        except (OSError, ValueError):
+            LOGGER.exception("Failed to remove directories for unqueued reconstruction job %s", job_id)
+
     def _remove_legacy_output(self, record: ProcessingJob) -> None:
         if self.legacy_output_root is None or record.output_path is None:
             raise ValueError("Legacy output root is unavailable")
         output_path = record.output_path.resolve()
-        if self.legacy_output_root not in output_path.parents or not output_path.is_file():
+        if self.legacy_output_root not in output_path.parents:
             raise ValueError(f"Refusing to delete unmanaged legacy output: {output_path}")
-        output_path.unlink()
+        if output_path.exists() and not output_path.is_file():
+            raise ValueError(f"Refusing to delete non-file legacy output: {output_path}")
+        output_path.unlink(missing_ok=True)
 
     @staticmethod
     def _remove_managed_tree(target: Path, root: Path) -> None:
@@ -455,16 +537,31 @@ class JobManager:
             shutil.rmtree(resolved_target)
 
 
-def _replace_metadata_file(temporary_path: Path, metadata_path: Path) -> None:
-    for attempt_index in range(METADATA_REPLACE_ATTEMPTS):
-        try:
-            temporary_path.replace(metadata_path)
-            return
-        except PermissionError:
-            if attempt_index == METADATA_REPLACE_ATTEMPTS - 1:
-                raise
-            time.sleep(METADATA_RETRY_BASE_SECONDS * (attempt_index + 1))
-
-
 def _same_activity(first: JobActivity, second: JobActivity) -> bool:
     return all(first[field_name] == second[field_name] for field_name in ("stage", "detail", "progress"))
+
+
+def _validate_gap_policy(video: dict, configuration: dict) -> None:
+    gap_configuration = configuration.get("gap")
+    if not isinstance(gap_configuration, dict):
+        return
+    choose_hidden_gaps(
+        total_frames=int(video["frames"]),
+        fps=float(video["fps"]),
+        rng=random.Random(0),
+        missing_fraction=float(gap_configuration.get("missing_fraction", 0.25)),
+        min_gap_seconds=float(gap_configuration.get("min_seconds", 1.0)),
+        max_gap_seconds=float(gap_configuration.get("max_seconds", 3.0)),
+        context_seconds=float(gap_configuration.get("context_seconds", 2.0)),
+    )
+
+
+def _public_failure_message(error: Exception) -> str:
+    if isinstance(error, (BlenderUnavailableError, MediaToolUnavailableError, UnsupportedVideoTimingError)):
+        first_line = next((line.strip() for line in str(error).splitlines() if line.strip()), "")
+        return first_line[:PUBLIC_FAILURE_MESSAGE_LIMIT] or GENERIC_FAILURE_MESSAGE
+    if isinstance(error, BlenderRenderError):
+        return "Blender rendering failed. Check the job render log for details."
+    if isinstance(error, MediaProcessingError):
+        return "Final video encoding or validation failed. Check the job log for details."
+    return GENERIC_FAILURE_MESSAGE

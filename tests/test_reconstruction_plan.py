@@ -38,6 +38,25 @@ class ReconstructionPlanTests(unittest.TestCase):
         self.assertEqual(["backpack_1"], entity["associated_objects"])
         self.assertGreater(entity["confidence"], 0.5)
         self.assertTrue(all(point["opacity"] == 1.0 for point in entity["path"]))
+        self.assertEqual("forward_prediction", entity["path_constraint_mode"])
+        self.assertEqual("soft_consistency_check", entity["post_gap_observation_role"])
+
+        changed_after_track = {
+            **track,
+            "detections": [
+                *track["detections"][:3],
+                *[
+                    {**item, "bbox": [value + 200 for value in item["bbox"]]}
+                    for item in track["detections"][3:]
+                ],
+            ],
+        }
+        changed_plan = build_reconstruction_plan({"tracks": [changed_after_track]}, (100, 130), 30.0)
+        changed_entity = changed_plan["entities"][0]
+        self.assertEqual(
+            [point["bbox"] for point in entity["path"]],
+            [point["bbox"] for point in changed_entity["path"]],
+        )
 
 
 if __name__ == "__main__":

@@ -27,25 +27,6 @@ def _boundary_velocity(track: dict, boundary_frame: int, side: str) -> list[floa
     return [(last["bbox"][index] - first["bbox"][index]) / elapsed for index in range(4)]
 
 
-def _curved_bbox(
-    before_bbox: list[int],
-    after_bbox: list[int],
-    before_velocity: list[float],
-    after_velocity: list[float],
-    progress: float,
-    frame_count: int,
-) -> list[int]:
-    influence = progress * (1.0 - progress) * frame_count * 0.35
-    values = []
-    for index in range(4):
-        linear = before_bbox[index] * (1.0 - progress) + after_bbox[index] * progress
-        curve = (before_velocity[index] - after_velocity[index]) * influence
-        lower = min(before_bbox[index], after_bbox[index]) - 80
-        upper = max(before_bbox[index], after_bbox[index]) + 80
-        values.append(int(round(max(lower, min(upper, linear + curve)))))
-    return values
-
-
 def _extrapolated_bbox(bbox: list[int], velocity: list[float], frame_delta: int) -> list[int]:
     max_displacement = 120
     return [
@@ -82,12 +63,10 @@ def _path_point(
     progress: float,
     frame_count: int,
 ) -> tuple[list[int], float]:
-    if before and after:
-        bbox = _curved_bbox(before["bbox"], after["bbox"], before_velocity, after_velocity, progress, frame_count)
-        return bbox, 1.0
     if before:
         bbox = _extrapolated_bbox(before["bbox"], before_velocity, int(progress * frame_count))
-        return bbox, max(0.0, 1.0 - progress)
+        opacity = 1.0 if after else max(0.0, 1.0 - progress)
+        return bbox, opacity
     if after:
         delta = -int((1.0 - progress) * frame_count)
         bbox = _extrapolated_bbox(after["bbox"], after_velocity, delta)
@@ -124,6 +103,10 @@ def _planned_entity(track: dict, hidden_start: int, hidden_end: int, fps: float)
         "confidence": confidence,
         "visible_before_gap": before is not None,
         "visible_after_gap": after is not None,
+        "path_constraint_mode": "forward_prediction" if before else "reverse_entry_prediction",
+        "post_gap_observation_role": (
+            "soft_consistency_check" if before and after else "entry_boundary_evidence"
+        ),
         "reference_before": before,
         "reference_after": after,
         "associated_objects": track.get("associated_objects", []),

@@ -48,6 +48,13 @@ class ConfigurationValidationTests(unittest.TestCase):
         with self.assertRaisesRegex(ConfigurationValidationError, "max_parallel_gap_renders"):
             validate_configuration(invalid_configuration)
 
+    def test_rejects_render_stall_timeout_under_one_minute(self) -> None:
+        invalid_configuration = copy.deepcopy(self.configuration)
+        invalid_configuration["renderer"]["gap_render_stall_timeout_seconds"] = 30
+
+        with self.assertRaisesRegex(ConfigurationValidationError, "gap_render_stall_timeout_seconds"):
+            validate_configuration(invalid_configuration)
+
 
 if __name__ == "__main__":
     unittest.main()

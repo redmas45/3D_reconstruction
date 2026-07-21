@@ -78,14 +78,22 @@ def build_camera_contract(scene_report: dict, settings: GroundCalibration | None
     confidence = calibration_confidence({
         "static_feature_inlier_score": float(motion_report.get("static_feature_inlier_score", 0.0)),
         "camera_motion_fit_score": float(motion_report.get("camera_motion_fit_score", 0.0)),
-        "ground_reprojection_score": 0.78,
-        "horizon_stability_score": 0.78,
         "height_prior_stability_score": height_score,
         "evidence_support_score": support_score,
     })
+    motion_model = motion_report.get("classification", "unclassified")
     return {
-        "mode": "evidence_matched",
-        "motion_model": motion_report.get("classification", "unclassified"),
+        "mode": "generic_ground_prior",
+        "motion_model": motion_model,
+        "motion_applied_to_render": False,
+        "compatibility": {
+            "status": "supported" if motion_model == "static_camera" else "experimental",
+            "reason": (
+                "Static-camera evidence is compatible with the current renderer."
+                if motion_model == "static_camera"
+                else "Camera motion is measured but is not yet applied to the Blender camera."
+            ),
+        },
         "calibration_confidence": confidence["score"],
         "calibration_report": confidence,
         "focal_length_mm": 32.0,
@@ -100,6 +108,7 @@ def build_camera_contract(scene_report: dict, settings: GroundCalibration | None
             "far_y": calibration.ground_far_y,
             "near_depth_meters": calibration.near_depth_meters,
             "far_depth_meters": calibration.far_depth_meters,
+            "source": "generic_prior_not_measured_geometry",
         },
     }
 

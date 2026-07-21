@@ -1,10 +1,9 @@
 """Coordinates evidence analysis, reconstruction rendering, and final video assembly."""
 
-import json
 import random
 import threading
 from concurrent.futures import Future, ThreadPoolExecutor, as_completed
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Callable
 
@@ -21,7 +20,27 @@ from visual_output import render_annotated_visible_chunk
 from application.blender_pipeline import prepare_blender_assets, render_blender_gap
 from domain.cancellation import CancellationCheck, raise_if_cancelled
 from domain.configuration import load_validated_configuration
-from infrastructure.media_tools import VideoContract, encode_with_source_audio, validate_video_contract
+from domain.evidence_contract import validate_visible_evidence_only
+from domain.reconstruction_cache import (
+    cached_detections_are_valid as _cached_detections_are_valid,
+    gap_cache_configuration as _gap_cache_configuration,
+    selection_cache_is_compatible as _selection_cache_is_compatible,
+    source_video_contract as _source_video_contract,
+)
+from infrastructure.blender_runner import DEFAULT_RENDER_STALL_TIMEOUT_SECONDS, find_blender_executable
+from infrastructure.json_files import read_json_file, write_json_file
+from infrastructure.media_tools import (
+    VideoContract,
+    encode_with_source_audio,
+    find_media_tool,
+    validate_constant_frame_rate,
+    validate_video_contract,
+)
+from infrastructure.source_video import (
+    inspect_source_video as video_info,
+    source_video_sha256 as _source_video_sha256,
+    validate_source_resource_limits as _validate_source_resource_limits,
+)
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -106,7 +125,10 @@ def _report(callback: ProgressCallback | None, stage: str, progress: float, deta
 
 def yolo_class_ids(config: dict) -> list[int]:
     classes = config.get("yolo", {}).get("classes", {})
-    return sorted(int(class_id) for class_id in classes) if classes else sorted(RELEVANT_COCO_CLASSES)
+    configured_ids = {int(class_id) for class_id in classes}
+    relevant_ids = set(RELEVANT_COCO_CLASSES)
+    selected_ids = configured_ids & relevant_ids if configured_ids else relevant_ids
+    return sorted(selected_ids)
 
 
 def normalize_confidence(value: float) -> float:
@@ -116,29 +138,17 @@ def normalize_confidence(value: float) -> float:
     return max(0.0, min(1.0, confidence))
 
 
-def video_info(video_path: Path) -> dict:
-    capture = cv2.VideoCapture(str(video_path))
-    if not capture.isOpened():
-        raise ValueError(f"Cannot open video: {video_path.name}")
-    info = {
-        "width": int(capture.get(cv2.CAP_PROP_FRAME_WIDTH)),
-        "height": int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT)),
-        "fps": float(capture.get(cv2.CAP_PROP_FPS) or 30.0),
-        "frames": int(capture.get(cv2.CAP_PROP_FRAME_COUNT)),
-    }
-    capture.release()
-    if info["frames"] < 4 or info["width"] < 1 or info["height"] < 1:
-        raise ValueError(f"Video is unreadable or too short: {video_path.name}")
-    return info
-
-
 def write_json(path: Path, payload: object) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8") as output_file:
-        json.dump(payload, output_file, indent=2)
+    write_json_file(path, payload)
 
 
-def write_video_range(video_path: Path, start_frame: int, end_frame: int, output_path: Path) -> Path:
+def write_video_range(
+    video_path: Path,
+    start_frame: int,
+    end_frame: int,
+    output_path: Path,
+    cancellation_check: CancellationCheck | None = None,
+) -> Path:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     capture = cv2.VideoCapture(str(video_path))
     if not capture.isOpened():
@@ -147,14 +157,28 @@ def write_video_range(video_path: Path, start_frame: int, end_frame: int, output
     height = int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
     fps = float(capture.get(cv2.CAP_PROP_FPS) or 30.0)
     writer = cv2.VideoWriter(str(output_path), cv2.VideoWriter_fourcc(*"mp4v"), fps, (width, height))
-    capture.set(cv2.CAP_PROP_POS_FRAMES, max(0, start_frame))
-    for _ in range(start_frame, end_frame + 1):
-        success, frame = capture.read()
-        if not success:
-            break
-        writer.write(frame)
-    capture.release()
-    writer.release()
+    if not writer.isOpened():
+        capture.release()
+        raise OSError(f"Cannot create video segment: {output_path.name}")
+    written_frames = 0
+    try:
+        capture.set(cv2.CAP_PROP_POS_FRAMES, max(0, start_frame))
+        for _ in range(start_frame, end_frame + 1):
+            raise_if_cancelled(cancellation_check)
+            success, frame = capture.read()
+            if not success:
+                break
+            writer.write(frame)
+            written_frames += 1
+    finally:
+        capture.release()
+        writer.release()
+    expected_frames = end_frame - start_frame + 1
+    if written_frames != expected_frames:
+        raise ValueError(
+            f"Video ended while extracting {output_path.name}: "
+            f"wrote {written_frames} of {expected_frames} frames"
+        )
     return output_path
 
 
@@ -178,7 +202,7 @@ def reserve_timeline_segment_paths(
 
 
 def _new_selection(info: dict, gap_config: dict, rng: random.Random) -> dict:
-    return choose_hidden_gaps(
+    selection = choose_hidden_gaps(
         total_frames=info["frames"],
         fps=info["fps"],
         rng=rng,
@@ -187,13 +211,18 @@ def _new_selection(info: dict, gap_config: dict, rng: random.Random) -> dict:
         max_gap_seconds=gap_config.get("max_seconds", 3.0),
         context_seconds=gap_config.get("context_seconds", 2.0),
     )
+    return {
+        **selection,
+        "source_video_contract": _source_video_contract(info),
+        "gap_configuration": _gap_cache_configuration(gap_config),
+    }
 
 
 def _load_selection(work_dir: Path, info: dict, config: dict, rng: random.Random, reuse_work: bool) -> dict:
     selection_path = work_dir / "gap_selection.json"
     if reuse_work and selection_path.exists():
-        selection = json.loads(selection_path.read_text(encoding="utf-8"))
-        if selection.get("policy") == "distributed_short_evidence_gaps":
+        selection = read_json_file(selection_path)
+        if _selection_cache_is_compatible(selection, info, config.get("gap", {})):
             return selection
     selection = _new_selection(info, config.get("gap", {}), rng)
     write_json(selection_path, selection)
@@ -207,15 +236,27 @@ def _load_detections(
     config: dict,
     reuse_work: bool,
     progress_callback: ProgressCallback | None,
+    cancellation_check: CancellationCheck | None,
 ) -> list[dict]:
     detections_path = work_dir / "detections.json"
-    if reuse_work and detections_path.exists():
-        _report(progress_callback, "detecting", DETECTION_START + DETECTION_SPAN, "Reused compatible detection cache")
-        return json.loads(detections_path.read_text(encoding="utf-8"))
+    manifest_path = work_dir / "detections_manifest.json"
     yolo_config = config.get("yolo", {})
     tracker_config = yolo_config.get("tracker_config")
     if tracker_config and not Path(tracker_config).is_absolute():
         tracker_config = str(ROOT / tracker_config)
+    cache_contract = _detection_cache_contract(selection, config, yolo_config, tracker_config)
+    if reuse_work and detections_path.exists() and manifest_path.exists():
+        cached_manifest = read_json_file(manifest_path)
+        if cached_manifest == cache_contract:
+            detections = read_json_file(detections_path)
+            if _cached_detections_are_valid(detections, selection["visible_ranges"]):
+                _report(
+                    progress_callback,
+                    "detecting",
+                    DETECTION_START + DETECTION_SPAN,
+                    "Reused compatible detection cache",
+                )
+                return detections
 
     def report_detection(completed: int, total: int) -> None:
         fraction = completed / max(1, total)
@@ -232,9 +273,29 @@ def _load_detections(
         conf=normalize_confidence(yolo_config.get("confidence", 0.3)),
         tracker_config=tracker_config,
         progress_callback=report_detection,
+        cancellation_check=cancellation_check,
     )
     write_json(detections_path, detections)
+    write_json(manifest_path, cache_contract)
     return detections
+
+
+def _detection_cache_contract(
+    selection: dict,
+    config: dict,
+    yolo_config: dict,
+    tracker_config: str | None,
+) -> dict:
+    return {
+        "source_video_contract": selection.get("source_video_contract"),
+        "visible_ranges": selection["visible_ranges"],
+        "model": str(yolo_config.get("model", "yolo26m.pt")),
+        "class_ids": yolo_class_ids(config),
+        "frame_stride": int(yolo_config.get("frame_stride", 8)),
+        "downscale_width": int(yolo_config.get("downscale_width", 960)),
+        "confidence": normalize_confidence(yolo_config.get("confidence", 0.3)),
+        "tracker_config": tracker_config,
+    }
 
 
 def _build_plans(scene_report: dict, selection: dict, info: dict, work_dir: Path, scene_config: dict) -> list[dict]:
@@ -271,10 +332,8 @@ def _render_visible_segment(
     info: dict,
     config: dict,
     visible_count: int,
-    reuse_work: bool,
+    cancellation_check: CancellationCheck | None,
 ) -> None:
-    if reuse_work and output_path.exists() and output_path.stat().st_size >= 1_000:
-        return
     scene_config = config.get("scene", {})
     yolo_config = config.get("yolo", {})
     render_annotated_visible_chunk(
@@ -286,6 +345,7 @@ def _render_visible_segment(
         info["fps"],
         max_gap=max(20, yolo_config.get("frame_stride", 8) * scene_config.get("track_interpolation_max_gap_multiplier", 4)),
         visual_config=config.get("visualization", {}),
+        cancellation_check=cancellation_check,
     )
 
 
@@ -318,7 +378,7 @@ def _render_timeline_segment(context: TimelineRenderContext, segment: dict) -> t
         visible_count = len(prepared.gap_selection["visible_ranges"])
         _render_visible_segment(
             context.video_path, output_path, segment, prepared.scene_report, prepared.video_info,
-            context.configuration, visible_count, context.reuse_work,
+            context.configuration, visible_count, context.cancellation_check,
         )
         return output_path, None
     return _render_hidden_segment(context, segment)
@@ -349,18 +409,24 @@ def _render_blender_hidden_segment(
 ) -> Path:
     prepared = context.prepared
     gap_directory = prepared.work_dir / "gaps" / f"gap_{gap_index:02d}"
+    stall_timeout_seconds = int(
+        context.configuration.get("renderer", {}).get(
+            "gap_render_stall_timeout_seconds", DEFAULT_RENDER_STALL_TIMEOUT_SECONDS,
+        )
+    )
     output_path = render_blender_gap(
         ROOT,
         prepared.blender_plan_paths[gap_index],
         gap_directory,
         context.reuse_work,
-        context.cancellation_check,
-        frame_progress_callback,
+        cancellation_check=context.cancellation_check,
+        progress_callback=frame_progress_callback,
+        stall_timeout_seconds=stall_timeout_seconds,
     )
     hidden_range = prepared.gap_selection["hidden_ranges"][gap_index]
     expected_contract = VideoContract(
-        prepared.video_info["width"],
-        prepared.video_info["height"],
+        _scaled_render_dimension(prepared.video_info["width"], context.configuration),
+        _scaled_render_dimension(prepared.video_info["height"], context.configuration),
         prepared.video_info["fps"],
         int(hidden_range[1]) - int(hidden_range[0]) + 1,
     )
@@ -378,11 +444,16 @@ def _render_blender_gaps(
     gap_count = len(context.prepared.gap_selection["hidden_ranges"])
     worker_count = _parallel_gap_renderer_count(context.configuration, gap_count)
     progress_tracker = ParallelGapProgress(progress_callback, gap_count, worker_count)
+    abort_event = threading.Event()
+    worker_context = replace(
+        context,
+        cancellation_check=_combined_cancellation_check(context.cancellation_check, abort_event),
+    )
     executor = ThreadPoolExecutor(max_workers=worker_count, thread_name_prefix="blender-gap")
     futures: dict[Future[Path], int] = {
         executor.submit(
             _render_blender_hidden_segment,
-            context,
+            worker_context,
             gap_index,
             lambda current, total, index=gap_index: progress_tracker.report(index, current, total),
         ): gap_index
@@ -392,11 +463,25 @@ def _render_blender_gaps(
     try:
         for completed_count, future in enumerate(as_completed(futures), start=1):
             gap_index = futures[future]
-            rendered_paths[gap_index] = future.result()
+            try:
+                rendered_paths[gap_index] = future.result()
+            except Exception:
+                abort_event.set()
+                for pending_future in futures:
+                    pending_future.cancel()
+                raise
             _report_parallel_render_progress(progress_callback, completed_count, gap_count, worker_count)
     finally:
+        abort_event.set()
         executor.shutdown(wait=True, cancel_futures=True)
     return rendered_paths
+
+
+def _combined_cancellation_check(
+    external_check: CancellationCheck | None,
+    abort_event: threading.Event,
+) -> CancellationCheck:
+    return lambda: abort_event.is_set() or (external_check is not None and external_check())
 
 
 def _parallel_gap_renderer_count(configuration: dict, gap_count: int) -> int:
@@ -404,6 +489,12 @@ def _parallel_gap_renderer_count(configuration: dict, gap_count: int) -> int:
         configuration.get("renderer", {}).get("max_parallel_gap_renders", DEFAULT_PARALLEL_GAP_RENDERERS)
     )
     return max(1, min(configured_count, max(1, gap_count)))
+
+
+def _scaled_render_dimension(source_dimension: int, configuration: dict) -> int:
+    scale_percent = int(configuration.get("renderer", {}).get("production_scale_percent", 100))
+    scaled_dimension = max(2, round(source_dimension * scale_percent / 100.0))
+    return scaled_dimension if scaled_dimension % 2 == 0 else scaled_dimension + 1
 
 
 def _report_parallel_render_progress(
@@ -432,6 +523,7 @@ def _render_2d_hidden_segment(context: TimelineRenderContext, gap_index: int) ->
         str(output_path), str(context.video_path), prepared.reconstruction_plans[gap_index], prepared.scene_report,
         prepared.video_info["width"], prepared.video_info["height"], prepared.video_info["fps"],
         context.configuration.get("visualization", {}),
+        context.cancellation_check,
     )
     return output_path
 
@@ -476,17 +568,26 @@ def _prepare_reconstruction(
 ) -> PreparedReconstruction:
     raise_if_cancelled(options.cancellation_check)
     config = options.config_data
-    _report(progress_callback, "validating", VALIDATION_PROGRESS, "Validating video metadata")
+    _report(progress_callback, "validating", VALIDATION_PROGRESS, "Checking runtime tools and video metadata")
+    _validate_runtime_dependencies(options.renderer_mode)
     info = video_info(video_path)
+    validate_constant_frame_rate(video_path, info["fps"], options.cancellation_check)
+    info = {**info, "sha256": _source_video_sha256(video_path, options.cancellation_check)}
     options.output_dir.mkdir(parents=True, exist_ok=True)
-    work_dir = options.output_dir / "_work" / video_path.stem
+    work_dir = options.output_dir / "_work" / f"{video_path.stem}_{info['sha256'][:12]}"
     _report(progress_callback, "selecting_gaps", GAP_SELECTION_PROGRESS, "Selecting distributed 1–3 second gaps")
     selection = _load_selection(work_dir, info, config, rng, options.reuse_work)
     segment_paths = reserve_timeline_segment_paths(
         selection["timeline"], work_dir / "segments", progress_callback,
     )
     detections = _load_detections(
-        video_path, work_dir, selection, config, options.reuse_work, progress_callback,
+        video_path,
+        work_dir,
+        selection,
+        config,
+        options.reuse_work,
+        progress_callback,
+        options.cancellation_check,
     )
     _report(progress_callback, "planning", PLANNING_PROGRESS, "Building scene intelligence and reconstruction plans")
     scene_report, blender_plan_paths, plans = _prepare_scene_and_plans(
@@ -507,6 +608,7 @@ def _prepare_scene_and_plans(
 ) -> tuple[dict, list[Path], list[dict]]:
     config = options.config_data
     scene_report = _build_scene_report(detections, info, selection, video_path)
+    validate_visible_evidence_only(scene_report)
     blender_plan_paths: list[Path] = []
     if options.renderer_mode == "blender":
         blender_assets = prepare_blender_assets(
@@ -516,6 +618,7 @@ def _prepare_scene_and_plans(
             work_dir,
             int(config.get("scene", {}).get("max_render_entities", 12)),
             config.get("renderer", {}),
+            options.cancellation_check,
         )
         scene_report = blender_assets.scene_report
         blender_plan_paths = blender_assets.plan_paths
@@ -537,10 +640,10 @@ def _render_and_finalize(
     sequence, evaluation_items = _render_timeline(render_context, progress_callback)
     _materialize_hidden_truth(video_path, prepared, options.cancellation_check)
     _report(progress_callback, "evaluating", EVALUATION_PROGRESS, "Evaluating completed reconstructions")
-    accuracy_report = _evaluate(
+    diagnostic_report = _evaluate(
         video_path, evaluation_items, options.config_data, options.cancellation_check,
     )
-    write_json(prepared.work_dir / "accuracy_report.json", accuracy_report)
+    write_json(prepared.work_dir / "diagnostic_report.json", diagnostic_report)
     return _stitch_final_output(video_path, options, prepared, sequence, progress_callback)
 
 
@@ -609,7 +712,22 @@ def _materialize_hidden_truth(
     for gap_index, hidden_range in enumerate(prepared.gap_selection["hidden_ranges"]):
         raise_if_cancelled(cancellation_check)
         truth_path = prepared.segment_paths[("hidden", gap_index)]
-        write_video_range(video_path, int(hidden_range[0]), int(hidden_range[1]), truth_path)
+        write_video_range(
+            video_path,
+            int(hidden_range[0]),
+            int(hidden_range[1]),
+            truth_path,
+            cancellation_check,
+        )
+
+
+def _validate_runtime_dependencies(renderer_mode: str) -> None:
+    if renderer_mode not in {"blender", "2d"}:
+        raise ValueError("Renderer mode must be 'blender' or '2d'")
+    find_media_tool("ffmpeg")
+    find_media_tool("ffprobe")
+    if renderer_mode == "blender":
+        find_blender_executable()
 
 
 def process_video(

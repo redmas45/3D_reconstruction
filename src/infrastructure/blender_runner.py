@@ -1,6 +1,7 @@
 import logging
 import os
 import re
+import signal
 import shutil
 import subprocess
 import threading
@@ -16,7 +17,7 @@ BLENDER_EXECUTABLE_ENVIRONMENT_KEY = "BLENDER_EXECUTABLE"
 WINDOWS_BLENDER_EXECUTABLE = Path(
     r"C:\Program Files\Blender Foundation\Blender 4.5\blender.exe"
 )
-DEFAULT_RENDER_TIMEOUT_SECONDS = 1_800
+DEFAULT_RENDER_STALL_TIMEOUT_SECONDS = 7_200
 PROCESS_POLL_SECONDS = 0.2
 PROCESS_TERMINATION_TIMEOUT_SECONDS = 5.0
 PROGRESS_MARKER_PATTERN = re.compile(r"RECON_PROGRESS\s+(\d+)\s+(\d+)")
@@ -30,6 +31,21 @@ class BlenderUnavailableError(RuntimeError):
 
 class BlenderRenderError(RuntimeError):
     pass
+
+
+class RenderHeartbeat:
+    def __init__(self) -> None:
+        self._last_progress = time.monotonic()
+        self._lock = threading.Lock()
+
+    def mark_progress(self) -> None:
+        with self._lock:
+            self._last_progress = time.monotonic()
+
+    def has_stalled(self, timeout_seconds: int) -> bool:
+        with self._lock:
+            seconds_without_progress = time.monotonic() - self._last_progress
+        return seconds_without_progress >= timeout_seconds
 
 
 @dataclass(frozen=True)
@@ -67,7 +83,7 @@ def find_blender_executable() -> Path:
 def render_with_blender(
     project_root: Path,
     request: BlenderRenderRequest,
-    timeout_seconds: int = DEFAULT_RENDER_TIMEOUT_SECONDS,
+    timeout_seconds: int = DEFAULT_RENDER_STALL_TIMEOUT_SECONDS,
     cancellation_check: CancellationCheck | None = None,
     progress_callback: BlenderProgressCallback | None = None,
 ) -> BlenderRenderResult:
@@ -109,6 +125,7 @@ def _run_blender(
     progress_callback: BlenderProgressCallback | None = None,
 ) -> int:
     deadline = time.monotonic() + timeout_seconds
+    heartbeat = RenderHeartbeat()
     with log_path.open("w", encoding="utf-8") as log_file:
         process = subprocess.Popen(
             command,
@@ -117,12 +134,15 @@ def _run_blender(
             stderr=subprocess.STDOUT,
             text=True,
             bufsize=1,
+            start_new_session=os.name != "nt",
         )
         if process.stdout is None:
             raise BlenderRenderError("Blender output stream could not be opened")
-        output_thread = _start_output_capture(process.stdout, log_file, progress_callback)
+        output_thread = _start_output_capture(process.stdout, log_file, progress_callback, heartbeat)
         try:
-            return _wait_for_blender(process, deadline, timeout_seconds, cancellation_check)
+            return _wait_for_blender(
+                process, deadline, timeout_seconds, cancellation_check, heartbeat,
+            )
         finally:
             if process.poll() is None:
                 _terminate_process(process)
@@ -133,10 +153,11 @@ def _start_output_capture(
     output_stream: TextIO,
     log_file: TextIO,
     progress_callback: BlenderProgressCallback | None,
+    heartbeat: RenderHeartbeat,
 ) -> threading.Thread:
     thread = threading.Thread(
         target=_capture_output,
-        args=(output_stream, log_file, progress_callback),
+        args=(output_stream, log_file, progress_callback, heartbeat),
         name="blender-output",
         daemon=True,
     )
@@ -148,13 +169,17 @@ def _capture_output(
     output_stream: TextIO,
     log_file: TextIO,
     progress_callback: BlenderProgressCallback | None,
+    heartbeat: RenderHeartbeat,
 ) -> None:
     active_callback = progress_callback
     for line in output_stream:
         log_file.write(line)
         log_file.flush()
         progress = _parse_progress_line(line)
-        if progress is None or active_callback is None:
+        if progress is None:
+            continue
+        heartbeat.mark_progress()
+        if active_callback is None:
             continue
         try:
             active_callback(*progress)
@@ -178,26 +203,47 @@ def _wait_for_blender(
     deadline: float,
     timeout_seconds: int,
     cancellation_check: CancellationCheck | None,
+    heartbeat: RenderHeartbeat | None = None,
 ) -> int:
     while process.poll() is None:
         if cancellation_check is not None and cancellation_check():
             _terminate_process(process)
             raise CancellationRequestedError("Blender rendering was cancelled")
-        if time.monotonic() >= deadline:
+        timeout_expired = (
+            heartbeat.has_stalled(timeout_seconds)
+            if heartbeat is not None
+            else time.monotonic() >= deadline
+        )
+        if timeout_expired:
             _terminate_process(process)
-            raise BlenderRenderError(f"Blender exceeded the {timeout_seconds}-second render timeout")
+            raise BlenderRenderError(
+                f"Blender produced no frame progress for {timeout_seconds} seconds"
+            )
         time.sleep(PROCESS_POLL_SECONDS)
     raise_if_cancelled(cancellation_check)
     return int(process.returncode or 0)
 
 
 def _terminate_process(process: subprocess.Popen[str]) -> None:
-    process.terminate()
+    _signal_process(process, signal.SIGTERM)
     try:
         process.wait(timeout=PROCESS_TERMINATION_TIMEOUT_SECONDS)
     except subprocess.TimeoutExpired:
-        process.kill()
+        _signal_process(process, signal.SIGKILL)
         process.wait()
+
+
+def _signal_process(process: subprocess.Popen[str], signal_number: signal.Signals) -> None:
+    if os.name == "nt":
+        if signal_number == signal.SIGTERM:
+            process.terminate()
+        else:
+            process.kill()
+        return
+    try:
+        os.killpg(os.getpgid(process.pid), signal_number)
+    except ProcessLookupError:
+        return
 
 
 def _validate_request(request: BlenderRenderRequest) -> None:

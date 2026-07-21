@@ -10,6 +10,10 @@ from domain.video_upload import UploadValidationError, sanitize_upload_filename,
 
 
 class VideoUploadPolicyTests(unittest.TestCase):
+    def test_rejects_filename_too_long_for_managed_windows_paths(self) -> None:
+        with self.assertRaisesRegex(UploadValidationError, "filename is too long"):
+            validate_upload_metadata(f"{'a' * 220}.mp4", 100, 1_000)
+
     def test_sanitizes_path_and_unsafe_characters(self) -> None:
         self.assertEqual("judge_script_video.mp4", sanitize_upload_filename("../../judge<script>video?.MP4"))
 

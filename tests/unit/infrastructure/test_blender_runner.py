@@ -2,7 +2,7 @@ import sys
 import time
 import unittest
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
@@ -11,6 +11,7 @@ sys.path.insert(0, str(PROJECT_ROOT / "src"))
 from domain.cancellation import CancellationRequestedError
 from infrastructure.blender_runner import (
     BlenderRenderRequest,
+    RenderHeartbeat,
     _parse_progress_line,
     _wait_for_blender,
     build_blender_command,
@@ -48,6 +49,16 @@ class BlenderRunnerTests(unittest.TestCase):
         self.assertEqual((17, 90), _parse_progress_line("RECON_PROGRESS 17 90\n"))
         self.assertEqual((90, 90), _parse_progress_line("RECON_PROGRESS 100 90\n"))
         self.assertIsNone(_parse_progress_line("Fra:17 Mem:120.0M"))
+
+    def test_render_heartbeat_resets_inactivity_timeout(self) -> None:
+        with patch("infrastructure.blender_runner.time.monotonic", return_value=100.0):
+            heartbeat = RenderHeartbeat()
+        with patch("infrastructure.blender_runner.time.monotonic", return_value=161.0):
+            self.assertTrue(heartbeat.has_stalled(60))
+        with patch("infrastructure.blender_runner.time.monotonic", return_value=170.0):
+            heartbeat.mark_progress()
+        with patch("infrastructure.blender_runner.time.monotonic", return_value=200.0):
+            self.assertFalse(heartbeat.has_stalled(60))
 
 
 if __name__ == "__main__":

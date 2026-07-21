@@ -94,8 +94,16 @@ def choose_hidden_gaps(
     target_frames = max(1, int(round(total_frames * missing_fraction)))
     minimum_frames = _seconds_to_frames(min_gap_seconds, fps)
     maximum_frames = _seconds_to_frames(max_gap_seconds, fps)
+    if target_frames < minimum_frames:
+        minimum_video_seconds = min_gap_seconds / missing_fraction
+        raise ValueError(
+            "Video is too short for the configured gap policy; "
+            f"use at least {minimum_video_seconds:.2f} seconds of footage"
+        )
     gap_durations = _gap_durations(target_frames, minimum_frames, maximum_frames, rng)
     visible_frames = total_frames - target_frames
+    if visible_frames < len(gap_durations) + 1:
+        raise ValueError("Video does not contain enough visible evidence around the configured gaps")
     context_frames = _seconds_to_frames(context_seconds, fps)
     visible_durations = _visible_durations(visible_frames, len(gap_durations), context_frames, rng)
     timeline = _timeline(visible_durations, gap_durations)

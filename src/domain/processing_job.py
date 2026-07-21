@@ -126,13 +126,15 @@ class ProcessingJob:
             stage=ProcessingStage(str(payload["stage"])),
             progress=progress,
             detail=str(payload["detail"]),
-            created_at=str(payload["created_at"]),
-            started_at=_optional_string(payload.get("started_at")),
-            completed_at=_optional_string(payload.get("completed_at")),
+            created_at=_aware_timestamp(payload["created_at"], "created_at"),
+            started_at=_optional_aware_timestamp(payload.get("started_at"), "started_at"),
+            completed_at=_optional_aware_timestamp(payload.get("completed_at"), "completed_at"),
             output_path=(output_dir / output_file).resolve() if output_file else None,
             error=_optional_string(payload.get("error")),
             eta_seconds=_optional_integer(payload.get("eta_seconds")),
-            progress_updated_at=_optional_string(payload.get("progress_updated_at")),
+            progress_updated_at=_optional_aware_timestamp(
+                payload.get("progress_updated_at"), "progress_updated_at"
+            ),
             activity_log=_validated_activity_log(payload.get("activity_log", [])),
             is_legacy_output=bool(payload.get("is_legacy_output", False)),
             renderer_mode=validate_renderer_mode(str(payload.get("renderer_mode", "2d"))),
@@ -154,6 +156,22 @@ def _optional_integer(value: object) -> int | None:
     return None if value is None else int(value)
 
 
+def _optional_aware_timestamp(value: object, field_name: str) -> str | None:
+    return None if value is None else _aware_timestamp(value, field_name)
+
+
+def _aware_timestamp(value: object, field_name: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"Persisted {field_name} timestamp is invalid")
+    try:
+        parsed_timestamp = datetime.fromisoformat(value)
+    except ValueError as error:
+        raise ValueError(f"Persisted {field_name} timestamp is invalid") from error
+    if parsed_timestamp.tzinfo is None or parsed_timestamp.utcoffset() is None:
+        raise ValueError(f"Persisted {field_name} timestamp must include a timezone")
+    return parsed_timestamp.astimezone(timezone.utc).isoformat()
+
+
 def _validated_activity_log(value: object) -> list[JobActivity]:
     if not isinstance(value, list):
         return []
@@ -171,7 +189,7 @@ def _validated_activity_item(value: object) -> JobActivity | None:
     try:
         stage = ProcessingStage(str(value["stage"])).value
         progress = float(value["progress"])
-        timestamp = str(value["timestamp"])
+        timestamp = _aware_timestamp(value["timestamp"], "activity")
         detail = str(value["detail"])
     except (KeyError, TypeError, ValueError):
         return None

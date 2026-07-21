@@ -7,6 +7,7 @@ SUPPORTED_VIDEO_EXTENSIONS = frozenset({
 })
 DEFAULT_MAX_UPLOAD_BYTES = 4 * 1024 * 1024 * 1024
 UPLOAD_CHUNK_BYTES = 1024 * 1024
+MAXIMUM_UPLOAD_FILENAME_LENGTH = 180
 UNSAFE_FILENAME_CHARACTERS = re.compile(r"[^A-Za-z0-9._ -]+")
 
 
@@ -16,6 +17,8 @@ class UploadValidationError(ValueError):
 
 def validate_upload_metadata(source_name: str, content_length: int, maximum_bytes: int) -> str:
     safe_name = sanitize_upload_filename(source_name)
+    if len(safe_name) > MAXIMUM_UPLOAD_FILENAME_LENGTH:
+        raise UploadValidationError("The video filename is too long")
     extension = Path(safe_name).suffix.lower()
     if extension not in SUPPORTED_VIDEO_EXTENSIONS:
         supported = ", ".join(sorted(SUPPORTED_VIDEO_EXTENSIONS))

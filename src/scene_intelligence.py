@@ -117,6 +117,23 @@ def _union(parents: list[int], first: int, second: int) -> None:
         parents[second_root] = first_root
 
 
+def _components_have_compatible_appearance(
+    parents: list[int], tracks: list[dict], first: int, second: int,
+) -> bool:
+    first_root = _find_root(parents, first)
+    second_root = _find_root(parents, second)
+    if first_root == second_root:
+        return True
+    first_component = [index for index in range(len(tracks)) if _find_root(parents, index) == first_root]
+    second_component = [index for index in range(len(tracks)) if _find_root(parents, index) == second_root]
+    return all(
+        _cosine_similarity(tracks[left]["appearance"], tracks[right]["appearance"])
+        >= MINIMUM_APPEARANCE_SIMILARITY
+        for left in first_component
+        for right in second_component
+    )
+
+
 def _boundary_matches(local_tracks: list[dict], before_segment: int, after_segment: int) -> list[tuple[int, int, dict]]:
     before_indexes = [index for index, track in enumerate(local_tracks) if track["segment_index"] == before_segment]
     after_indexes = [index for index, track in enumerate(local_tracks) if track["segment_index"] == after_segment]
@@ -159,7 +176,7 @@ def _combine_component(tracks: list[dict], evidence: list[dict]) -> dict:
         "class_id": tracks[0]["class_id"],
         "detections": detections,
         "appearance": _mean_descriptor(detections),
-        "continuity_confidence": round(float(np.mean(scores)), 4) if scores else 0.0,
+        "continuity_confidence": round(float(np.mean(scores)), 4) if scores else None,
         "reidentification": evidence,
     }
 
@@ -172,6 +189,10 @@ def _merge_across_gaps(local_tracks: list[dict]) -> list[dict]:
     maximum_segment = max(track["segment_index"] for track in local_tracks)
     for segment_index in range(maximum_segment):
         for before_index, after_index, evidence in _boundary_matches(local_tracks, segment_index, segment_index + 1):
+            if not _components_have_compatible_appearance(
+                parents, local_tracks, before_index, after_index,
+            ):
+                continue
             _union(parents, before_index, after_index)
             match_evidence.append((before_index, after_index, evidence))
     components: dict[int, list[int]] = defaultdict(list)
@@ -223,7 +244,7 @@ def _summarize_track(raw_track: dict, track_id: str, fps: float) -> dict:
         "avg_area": round(float(np.mean([bbox_area(item["bbox"]) for item in detections])), 1),
         "direction": _direction(detections),
         "speed_px_sec": round(distance(first_center, last_center) / duration, 2),
-        "continuity_confidence": raw_track.get("continuity_confidence", 0.0),
+        "continuity_confidence": raw_track.get("continuity_confidence"),
         "reidentification": raw_track.get("reidentification"),
         "detections": [_public_detection(item) for item in detections],
     }

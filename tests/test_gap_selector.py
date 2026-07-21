@@ -34,6 +34,10 @@ class GapSelectorTests(unittest.TestCase):
             if index:
                 self.assertEqual(timeline[index - 1]["end"] + 1, segment["start"])
 
+    def test_video_shorter_than_gap_policy_fails_with_clear_message(self) -> None:
+        with self.assertRaisesRegex(ValueError, "use at least 4.00 seconds"):
+            choose_hidden_gaps(90, 30.0, random.Random(3))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,12 +1,15 @@
 import json
+from http.client import HTTPConnection
 import random
 import shutil
+import socket
 import sys
 import tempfile
 import threading
 import time
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
@@ -20,7 +23,7 @@ sys.path.insert(0, str(PROJECT_ROOT / "src"))
 from application.processing_jobs import JobManager
 from application.reconstruction_pipeline import PipelineOptions, ProgressCallback
 from domain.cancellation import raise_if_cancelled
-from interfaces.http.local_server import build_server
+from interfaces.http.local_server import _download_content_disposition, build_server
 
 
 REQUEST_TIMEOUT_SECONDS = 3.0
@@ -129,6 +132,75 @@ class LocalServerTests(unittest.TestCase):
             urlopen(request, timeout=REQUEST_TIMEOUT_SECONDS)
         self.assertEqual(400, context.exception.code)
         self.assertEqual([], self.manager.list_jobs())
+
+    def test_rejects_non_loopback_host_header(self) -> None:
+        connection = HTTPConnection("127.0.0.1", self.server.server_port, timeout=REQUEST_TIMEOUT_SECONDS)
+        connection.putrequest("GET", "/api/health", skip_host=True)
+        connection.putheader("Host", "attacker.example")
+        connection.endheaders()
+        response = connection.getresponse()
+        try:
+            self.assertEqual(421, response.status)
+        finally:
+            response.read()
+            connection.close()
+
+    def test_server_refuses_non_loopback_bind_address(self) -> None:
+        with self.assertRaisesRegex(ValueError, "loopback"):
+            build_server(("0.0.0.0", 0), self.manager, PROJECT_ROOT / "web")
+
+    def test_download_header_supports_unicode_legacy_filename(self) -> None:
+        header = _download_content_disposition("测试 reconstruction.mp4")
+
+        header.encode("latin-1")
+        self.assertIn("filename*=UTF-8''%E6%B5%8B%E8%AF%95%20reconstruction.mp4", header)
+
+    def test_shutdown_cancels_partial_http_requests(self) -> None:
+        connection = socket.create_connection(("127.0.0.1", self.server.server_port), timeout=REQUEST_TIMEOUT_SECONDS)
+        connection.sendall(b"GET /api/health HTTP/1.1\r\nHost:")
+        deadline = time.monotonic() + REQUEST_TIMEOUT_SECONDS
+        while time.monotonic() < deadline:
+            with self.server._active_connections_lock:
+                if self.server._active_connections:
+                    break
+            time.sleep(0.01)
+        else:
+            self.fail("Partial HTTP request was not tracked")
+
+        self.server.cancel_active_requests()
+        connection.close()
+        while time.monotonic() < deadline:
+            with self.server._active_connections_lock:
+                if not self.server._active_connections:
+                    return
+            time.sleep(0.01)
+        self.fail("Cancelled HTTP request did not exit")
+
+    def test_oversized_range_is_rejected_cleanly(self) -> None:
+        video_bytes = create_test_video(self.temporary_root / "range-fixture.mp4")
+        upload_request = Request(
+            f"{self.base_url}/api/jobs",
+            data=video_bytes,
+            method="POST",
+            headers={"X-File-Name": "range-video.mp4", "Content-Type": "video/mp4"},
+        )
+        with urlopen(upload_request, timeout=REQUEST_TIMEOUT_SECONDS) as response:
+            job_id = json.load(response)["job"]["id"]
+        completed_job = self._wait_for_completion(job_id)
+        range_header = f"bytes={'9' * 100}-"
+        request = Request(f"{self.base_url}{completed_job['output_url']}", headers={"Range": range_header})
+        with self.assertRaises(HTTPError) as context:
+            urlopen(request, timeout=REQUEST_TIMEOUT_SECONDS)
+        self.assertEqual(416, context.exception.code)
+
+    def test_cancel_persistence_error_returns_clean_server_error(self) -> None:
+        with patch.object(self.manager, "cancel_job", side_effect=OSError("private path")):
+            request = Request(f"{self.base_url}/api/jobs/{'a' * 32}/cancel", method="POST", data=b"")
+            with self.assertLogs("interfaces.http.local_server", level="ERROR"):
+                with self.assertRaises(HTTPError) as context:
+                    urlopen(request, timeout=REQUEST_TIMEOUT_SECONDS)
+        self.assertEqual(500, context.exception.code)
+        self.assertNotIn("private path", context.exception.read().decode("utf-8"))
 
     def test_active_job_can_be_cancelled_through_api(self) -> None:
         video_bytes = create_test_video(self.temporary_root / "cancel-fixture.mp4")

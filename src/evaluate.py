@@ -22,22 +22,31 @@ def _ssim(first: np.ndarray, second: np.ndarray) -> float:
     return float(np.mean(numerator / np.maximum(denominator, 1e-9)))
 
 
-def _frame_similarity(truth_path: str, reconstruction_path: str) -> dict:
+def _frame_similarity(
+    truth_path: str,
+    reconstruction_path: str,
+    cancellation_check: CancellationCheck | None,
+) -> dict:
     truth_capture = cv2.VideoCapture(truth_path)
     reconstruction_capture = cv2.VideoCapture(reconstruction_path)
     ssim_values: list[float] = []
     psnr_values: list[float] = []
-    while True:
-        truth_ok, truth_frame = truth_capture.read()
-        reconstruction_ok, reconstruction_frame = reconstruction_capture.read()
-        if not truth_ok or not reconstruction_ok:
-            break
-        if truth_frame.shape != reconstruction_frame.shape:
-            reconstruction_frame = cv2.resize(reconstruction_frame, (truth_frame.shape[1], truth_frame.shape[0]))
-        ssim_values.append(_ssim(truth_frame, reconstruction_frame))
-        psnr_values.append(float(cv2.PSNR(truth_frame, reconstruction_frame)))
-    truth_capture.release()
-    reconstruction_capture.release()
+    try:
+        while True:
+            raise_if_cancelled(cancellation_check)
+            truth_ok, truth_frame = truth_capture.read()
+            reconstruction_ok, reconstruction_frame = reconstruction_capture.read()
+            if not truth_ok or not reconstruction_ok:
+                break
+            if truth_frame.shape != reconstruction_frame.shape:
+                reconstruction_frame = cv2.resize(
+                    reconstruction_frame, (truth_frame.shape[1], truth_frame.shape[0])
+                )
+            ssim_values.append(_ssim(truth_frame, reconstruction_frame))
+            psnr_values.append(float(cv2.PSNR(truth_frame, reconstruction_frame)))
+    finally:
+        truth_capture.release()
+        reconstruction_capture.release()
     return {
         "frames_compared": len(ssim_values),
         "mean_ssim": round(float(np.mean(ssim_values)), 4) if ssim_values else None,
@@ -75,6 +84,10 @@ def _boundary_similarity(source_path: str, reconstruction_path: str, hidden_rang
     before = _read_frame(source_path, hidden_start - 1)
     after = _read_frame(source_path, hidden_end + 1)
     first, last = _first_and_last(reconstruction_path)
+    if first.shape != before.shape:
+        first = cv2.resize(first, (before.shape[1], before.shape[0]))
+    if last.shape != after.shape:
+        last = cv2.resize(last, (after.shape[1], after.shape[0]))
     before_score = _ssim(before, first)
     after_score = _ssim(after, last)
     return {
@@ -118,6 +131,9 @@ def _center_error(truth: dict[str, list], reconstruction: dict[str, list], diago
             errors.append(min(1.0, float(distances[best_index]) / diagonal))
             remaining.pop(best_index)
         errors.extend([1.0] * len(remaining))
+    for class_name, reconstruction_centers in reconstruction.items():
+        if class_name not in truth:
+            errors.extend([1.0] * len(reconstruction_centers))
     return float(np.mean(errors)) if errors else (0.0 if not reconstruction else 1.0)
 
 
@@ -128,6 +144,7 @@ def _detection_consistency(
     class_ids: list[int],
     confidence: float,
     frame_stride: int,
+    cancellation_check: CancellationCheck | None,
 ) -> dict:
     truth_capture = cv2.VideoCapture(truth_path)
     reconstruction_capture = cv2.VideoCapture(reconstruction_path)
@@ -135,22 +152,38 @@ def _detection_consistency(
     person_scores: list[float] = []
     center_errors: list[float] = []
     frame_index = 0
-    while True:
-        truth_ok, truth_frame = truth_capture.read()
-        reconstruction_ok, reconstruction_frame = reconstruction_capture.read()
-        if not truth_ok or not reconstruction_ok:
-            break
-        if frame_index % max(1, frame_stride) == 0:
-            results = model.predict([truth_frame, reconstruction_frame], classes=class_ids, conf=confidence, verbose=False)
-            truth_objects = _result_objects(results[0], model.names)
-            reconstructed_objects = _result_objects(results[1], model.names)
-            count_scores.append(_count_similarity(truth_objects, reconstructed_objects))
-            person_scores.append(_count_similarity({"person": truth_objects.get("person", [])}, {"person": reconstructed_objects.get("person", [])}))
-            diagonal = float(np.hypot(truth_frame.shape[1], truth_frame.shape[0]))
-            center_errors.append(_center_error(truth_objects, reconstructed_objects, diagonal))
-        frame_index += 1
-    truth_capture.release()
-    reconstruction_capture.release()
+    try:
+        while True:
+            raise_if_cancelled(cancellation_check)
+            truth_ok, truth_frame = truth_capture.read()
+            reconstruction_ok, reconstruction_frame = reconstruction_capture.read()
+            if not truth_ok or not reconstruction_ok:
+                break
+            if frame_index % max(1, frame_stride) == 0:
+                if reconstruction_frame.shape != truth_frame.shape:
+                    reconstruction_frame = cv2.resize(
+                        reconstruction_frame, (truth_frame.shape[1], truth_frame.shape[0])
+                    )
+                results = model.predict(
+                    [truth_frame, reconstruction_frame],
+                    classes=class_ids,
+                    conf=confidence,
+                    verbose=False,
+                )
+                raise_if_cancelled(cancellation_check)
+                truth_objects = _result_objects(results[0], model.names)
+                reconstructed_objects = _result_objects(results[1], model.names)
+                count_scores.append(_count_similarity(truth_objects, reconstructed_objects))
+                person_scores.append(_count_similarity(
+                    {"person": truth_objects.get("person", [])},
+                    {"person": reconstructed_objects.get("person", [])},
+                ))
+                diagonal = float(np.hypot(truth_frame.shape[1], truth_frame.shape[0]))
+                center_errors.append(_center_error(truth_objects, reconstructed_objects, diagonal))
+            frame_index += 1
+    finally:
+        truth_capture.release()
+        reconstruction_capture.release()
     return {
         "sampled_frames": len(count_scores),
         "mean_object_count_similarity": round(float(np.mean(count_scores)), 4) if count_scores else None,
@@ -166,11 +199,14 @@ def _evaluate_gap(
     class_ids: list[int],
     confidence: float,
     frame_stride: int,
+    cancellation_check: CancellationCheck | None,
 ) -> dict:
     return {
         "gap_index": item["gap_index"],
         "hidden_range": list(item["hidden_range"]),
-        "frame_similarity": _frame_similarity(item["truth_path"], item["reconstruction_path"]),
+        "frame_similarity": _frame_similarity(
+            item["truth_path"], item["reconstruction_path"], cancellation_check
+        ),
         "boundary_continuity": _boundary_similarity(source_path, item["reconstruction_path"], item["hidden_range"]),
         "detection_consistency": _detection_consistency(
             item["truth_path"],
@@ -179,6 +215,7 @@ def _evaluate_gap(
             class_ids,
             confidence,
             max(1, frame_stride),
+            cancellation_check,
         ),
     }
 
@@ -198,13 +235,29 @@ def evaluate_reconstructions(
     frame_stride: int,
     cancellation_check: CancellationCheck | None = None,
 ) -> dict:
+    raise_if_cancelled(cancellation_check)
     model = YOLO(model_name)
+    raise_if_cancelled(cancellation_check)
     reports = []
     for item in items:
         raise_if_cancelled(cancellation_check)
-        reports.append(_evaluate_gap(item, source_path, model, class_ids, confidence, frame_stride))
+        reports.append(
+            _evaluate_gap(
+                item,
+                source_path,
+                model,
+                class_ids,
+                confidence,
+                frame_stride,
+                cancellation_check,
+            )
+        )
     return {
-        "mode": "post_reconstruction_hidden_truth_evaluation",
+        "mode": "post_reconstruction_diagnostic_similarity",
+        "interpretation": (
+            "These metrics compare a stylized inferred scene with hidden footage; "
+            "they are diagnostics, not reconstruction accuracy."
+        ),
         "ground_truth_usage": "Hidden frames were read only after every reconstruction completed.",
         "gap_count": len(reports),
         "summary": {

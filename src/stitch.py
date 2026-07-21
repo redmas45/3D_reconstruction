@@ -1,5 +1,4 @@
 import cv2
-import os
 
 from domain.cancellation import CancellationCheck, raise_if_cancelled
 
@@ -48,6 +47,9 @@ def _write_stream(
     cancellation_check: CancellationCheck | None = None,
 ) -> int:
     cap = cv2.VideoCapture(video_path)
+    if not cap.isOpened():
+        raise FileNotFoundError(f"Cannot open timeline segment: {video_path}")
+    expected_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     frame_count = 0
     try:
         while True:
@@ -61,6 +63,10 @@ def _write_stream(
             frame_count += 1
     finally:
         cap.release()
+    if expected_frames > 0 and frame_count != expected_frames:
+        raise ValueError(
+            f"Timeline segment decoded {frame_count} of {expected_frames} frames: {video_path}"
+        )
     return frame_count
 
 def stitch_videos(
@@ -85,6 +91,8 @@ def stitch_videos(
     
     fourcc = cv2.VideoWriter_fourcc(*"mp4v")
     out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
+    if not out.isOpened():
+        raise OSError(f"Cannot create stitched video: {output_path}")
 
     if crossfade_frames == 0 and not label_visible:
         print("[Stitcher] Streaming segments without overlays.")
@@ -177,6 +185,8 @@ def stitch_sequence(
 
     fourcc = cv2.VideoWriter_fourcc(*"mp4v")
     out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
+    if not out.isOpened():
+        raise OSError(f"Cannot create stitched timeline: {output_path}")
     total = 0
     try:
         for path in video_paths:

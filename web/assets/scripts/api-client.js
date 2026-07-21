@@ -2,6 +2,7 @@
 
 const JOBS_ENDPOINT = "/api/jobs";
 const NO_CACHE_REQUEST = Object.freeze({ cache: "no-store" });
+const UPLOAD_TIMEOUT_MILLISECONDS = 300_000;
 
 /**
  * @typedef {Object} JobActivity
@@ -52,6 +53,7 @@ export function uploadVideoJob(videoFile, rendererMode, reportUploadProgress) {
   return new Promise((resolve, reject) => {
     const request = new XMLHttpRequest();
     request.open("POST", JOBS_ENDPOINT);
+    request.timeout = UPLOAD_TIMEOUT_MILLISECONDS;
     request.setRequestHeader("Content-Type", videoFile.type || "application/octet-stream");
     request.setRequestHeader("X-File-Name", encodeURIComponent(videoFile.name));
     request.setRequestHeader("X-Renderer-Mode", rendererMode);
@@ -61,6 +63,7 @@ export function uploadVideoJob(videoFile, rendererMode, reportUploadProgress) {
     });
     request.addEventListener("load", () => resolveUploadResponse(request, resolve, reject));
     request.addEventListener("error", () => reject(new Error("Could not reach the local processing server")));
+    request.addEventListener("timeout", () => reject(new Error("Video upload timed out after 5 minutes")));
     request.send(videoFile);
   });
 }

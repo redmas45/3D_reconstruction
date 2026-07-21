@@ -246,6 +246,10 @@ h2 { font-size: 1.35rem; line-height: 1.2; margin-bottom: 0; letter-spacing: -0.
 .pipeline-step.completed::before { border-color: var(--success); background: var(--success); }
 .pipeline-step.active { color: var(--foreground); }
 .pipeline-step.active::before { border-color: var(--primary); background: var(--primary); box-shadow: 0 0 0 4px rgba(12, 202, 210, 0.1); }
+.pipeline-step.failed { color: var(--danger); }
+.pipeline-step.failed::before { border-color: var(--danger); background: var(--danger); }
+.pipeline-step.stopped { color: var(--warning); }
+.pipeline-step.stopped::before { border-color: var(--warning); background: var(--warning); }
 .pipeline-step-state { color: inherit; font-variant-numeric: tabular-nums; }
 .activity-feed { max-height: 150px; overflow-y: auto; margin: 0 0 0.2rem; padding: 0.75rem 0 0.15rem; border-top: 1px solid var(--border); list-style: none; }
 .activity-item { display: grid; grid-template-columns: 68px minmax(0, 1fr) auto; gap: 0.7rem; padding: 0.25rem 0; color: var(--muted); font-size: 0.66rem; }

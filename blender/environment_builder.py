@@ -6,6 +6,7 @@ from materials import create_material
 GROUND_SIZE_METERS = 34.0
 GRID_HALF_EXTENT = 16
 GRID_STEP_METERS = 2
+STREET_PROXY_PROFILE = "street"
 
 
 def build_environment(plan: dict) -> None:
@@ -19,7 +20,8 @@ def build_environment(plan: dict) -> None:
     for coordinate in range(-GRID_HALF_EXTENT, GRID_HALF_EXTENT + 1, GRID_STEP_METERS):
         _grid_line((-GRID_HALF_EXTENT, coordinate + 10.0, 0.012), (GRID_HALF_EXTENT, coordinate + 10.0, 0.012), grid_material)
         _grid_line((coordinate, -GRID_HALF_EXTENT + 10.0, 0.012), (coordinate, GRID_HALF_EXTENT + 10.0, 0.012), grid_material)
-    _build_street_proxies()
+    if environment.get("proxy_profile") == STREET_PROXY_PROFILE:
+        _build_street_proxies()
 
 
 def build_path_trail(entity: dict) -> None:

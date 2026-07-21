@@ -5,6 +5,8 @@ from statistics import median
 import cv2
 import numpy as np
 
+from domain.cancellation import CancellationCheck, raise_if_cancelled
+
 
 CAMERA_MOTION_SAMPLE_LIMIT = 12
 PAIR_FRAME_DISTANCE = 5
@@ -17,7 +19,11 @@ MAXIMUM_FIT_RESIDUAL_PIXELS = 4.0
 FOREGROUND_MASK_PADDING_PIXELS = 8
 
 
-def estimate_camera_motion(video_path: Path, scene_report: dict) -> dict:
+def estimate_camera_motion(
+    video_path: Path,
+    scene_report: dict,
+    cancellation_check: CancellationCheck | None = None,
+) -> dict:
     sample_pairs = _sample_pairs(scene_report.get("visible_ranges", []))
     capture = cv2.VideoCapture(str(video_path))
     if not capture.isOpened():
@@ -25,6 +31,7 @@ def estimate_camera_motion(video_path: Path, scene_report: dict) -> dict:
     pair_reports: list[dict] = []
     try:
         for first_frame, second_frame in sample_pairs:
+            raise_if_cancelled(cancellation_check)
             pair_report = _measure_pair(capture, scene_report, first_frame, second_frame)
             if pair_report is not None:
                 pair_reports.append(pair_report)
@@ -134,7 +141,8 @@ def summarize_camera_motion(pair_reports: list[dict], requested_samples: int) ->
     )
     fit_score = max(0.0, min(1.0, 1.0 - residual / MAXIMUM_FIT_RESIDUAL_PIXELS))
     return {
-        "classification": "static_camera" if static_camera else "stabilized_dynamic_camera",
+        "classification": "static_camera" if static_camera else "dynamic_camera",
+        "render_transform_available": False,
         "sample_count": len(pair_reports),
         "requested_sample_count": requested_samples,
         "median_translation_pixels_per_frame": round(translation, 5),
@@ -149,6 +157,7 @@ def summarize_camera_motion(pair_reports: list[dict], requested_samples: int) ->
 def _unclassified_motion_report(requested_samples: int) -> dict:
     return {
         "classification": "unclassified",
+        "render_transform_available": False,
         "sample_count": 0,
         "requested_sample_count": requested_samples,
         "median_translation_pixels_per_frame": None,

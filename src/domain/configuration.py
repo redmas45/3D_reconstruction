@@ -6,6 +6,8 @@ REQUIRED_CONFIGURATION_SECTIONS = ("yolo", "gap", "scene", "visualization", "eva
 MINIMUM_GAP_SECONDS = 0.1
 MAXIMUM_MISSING_FRACTION = 0.95
 MAXIMUM_PARALLEL_GAP_RENDERERS = 4
+MINIMUM_RENDER_STALL_TIMEOUT_SECONDS = 60
+MAXIMUM_RENDER_STALL_TIMEOUT_SECONDS = 86_400
 
 
 class ConfigurationValidationError(ValueError):
@@ -64,6 +66,11 @@ def _validate_renderer_configuration(renderer_configuration: dict) -> None:
     if not 1 <= parallel_renderers <= MAXIMUM_PARALLEL_GAP_RENDERERS:
         raise ConfigurationValidationError(
             f"renderer.max_parallel_gap_renders must be between 1 and {MAXIMUM_PARALLEL_GAP_RENDERERS}"
+        )
+    stall_timeout = _required_integer(renderer_configuration, "gap_render_stall_timeout_seconds")
+    if not MINIMUM_RENDER_STALL_TIMEOUT_SECONDS <= stall_timeout <= MAXIMUM_RENDER_STALL_TIMEOUT_SECONDS:
+        raise ConfigurationValidationError(
+            "renderer.gap_render_stall_timeout_seconds must be between 60 and 86400"
         )
 
 

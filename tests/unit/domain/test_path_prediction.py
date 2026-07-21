@@ -63,6 +63,57 @@ class PathPredictionTests(unittest.TestCase):
         self.assertIsNotNone(prediction)
         self.assertEqual("uncertain", prediction["lifecycle"])
 
+    def test_unmatched_entry_uses_conservative_detection_confidence(self) -> None:
+        camera = build_camera_contract(_scene_report())
+        track = {
+            "id": "person_3",
+            "class_name": "person",
+            "continuity_confidence": None,
+            "avg_confidence": 0.9,
+            "detections": [
+                {"frame": 21, "bbox": [100, 100, 120, 200], "confidence": 0.9},
+                {"frame": 22, "bbox": [110, 100, 130, 200], "confidence": 0.9},
+            ],
+        }
+
+        prediction = build_entity_prediction(track, (10, 20), 10.0, (640, 480), camera)
+
+        self.assertIsNotNone(prediction)
+        self.assertEqual("enters", prediction["lifecycle"])
+        self.assertGreater(prediction["confidence"], 0.50)
+        self.assertEqual(
+            "entry_boundary_evidence",
+            prediction["path_prediction"]["post_gap_observation_role"],
+        )
+        self.assertIsNone(prediction["boundary_evidence"]["pre_gap_heading_degrees"])
+        self.assertIsNone(prediction["boundary_evidence"]["post_gap_position_residual_meters"])
+
+    def test_entry_direction_is_not_penalized_by_a_fabricated_pre_gap_heading(self) -> None:
+        camera = build_camera_contract(_scene_report())
+
+        def entry_track(track_id: str, first_x: int, second_x: int) -> dict:
+            return {
+                "id": track_id,
+                "class_name": "person",
+                "continuity_confidence": None,
+                "avg_confidence": 0.9,
+                "detections": [
+                    {"frame": 21, "bbox": [first_x, 100, first_x + 20, 200], "confidence": 0.9},
+                    {"frame": 22, "bbox": [second_x, 100, second_x + 20, 200], "confidence": 0.9},
+                ],
+            }
+
+        right_entry = build_entity_prediction(
+            entry_track("right", 100, 110), (10, 20), 10.0, (640, 480), camera,
+        )
+        left_entry = build_entity_prediction(
+            entry_track("left", 110, 100), (10, 20), 10.0, (640, 480), camera,
+        )
+
+        self.assertIsNotNone(right_entry)
+        self.assertIsNotNone(left_entry)
+        self.assertEqual(right_entry["confidence"], left_entry["confidence"])
+
 
 def _scene_report() -> dict:
     return {"video": {"width": 640, "height": 480}, "tracks": []}

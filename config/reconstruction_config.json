@@ -117,6 +117,7 @@
     "blender_version": "4.5 LTS",
     "preview_scale_percent": 75,
     "production_scale_percent": 100,
-    "max_parallel_gap_renders": 3
+    "max_parallel_gap_renders": 3,
+    "gap_render_stall_timeout_seconds": 7200
   }
 }

@@ -7,6 +7,8 @@ from statistics import median
 import cv2
 import numpy as np
 
+from domain.cancellation import CancellationCheck, raise_if_cancelled
+
 
 IDENTITY_SCHEMA_VERSION = 1
 IDENTITY_GENERATOR_VERSION = "procedural_forensic_v1"
@@ -16,16 +18,23 @@ DEFAULT_LOWER_COLOR = [0.16, 0.19, 0.24]
 RENDERABLE_CLASSES = {"person", "car", "truck", "bus", "motorcycle", "bicycle"}
 
 
-def build_identity_registry(scene_report: dict, video_path: Path) -> dict:
+def build_identity_registry(
+    scene_report: dict,
+    video_path: Path,
+    cancellation_check: CancellationCheck | None = None,
+) -> dict:
     capture = cv2.VideoCapture(str(video_path))
     if not capture.isOpened():
         raise ValueError(f"Cannot sample visible appearance from {video_path.name}")
     try:
-        identities = {
-            track["id"]: _identity_for_track(capture, video_path.stem, track)
-            for track in scene_report.get("tracks", [])
-            if track.get("class_name") in RENDERABLE_CLASSES
-        }
+        identities = {}
+        for track in scene_report.get("tracks", []):
+            raise_if_cancelled(cancellation_check)
+            if track.get("class_name") not in RENDERABLE_CLASSES:
+                continue
+            identities[track["id"]] = _identity_for_track(
+                capture, video_path.stem, track, cancellation_check,
+            )
     finally:
         capture.release()
     return {
@@ -42,10 +51,17 @@ def write_identity_registry(registry: dict, output_path: Path) -> None:
         json.dump(registry, registry_file, indent=2)
 
 
-def _identity_for_track(capture: cv2.VideoCapture, video_id: str, track: dict) -> dict:
+def _identity_for_track(
+    capture: cv2.VideoCapture,
+    video_id: str,
+    track: dict,
+    cancellation_check: CancellationCheck | None,
+) -> dict:
     seed = _identity_seed(video_id, str(track["id"]))
     random_generator = random.Random(seed)
-    sampled_colors = _sample_appearance_colors(capture, track.get("detections", []))
+    sampled_colors = _sample_appearance_colors(
+        capture, track.get("detections", []), cancellation_check,
+    )
     upper_color = sampled_colors[0] if sampled_colors else _jitter_color(DEFAULT_UPPER_COLOR, random_generator)
     lower_color = sampled_colors[1] if sampled_colors else _jitter_color(DEFAULT_LOWER_COLOR, random_generator)
     return {
@@ -70,11 +86,16 @@ def _identity_for_track(capture: cv2.VideoCapture, video_id: str, track: dict) -
     }
 
 
-def _sample_appearance_colors(capture: cv2.VideoCapture, detections: list[dict]) -> tuple[list[float], list[float]] | None:
+def _sample_appearance_colors(
+    capture: cv2.VideoCapture,
+    detections: list[dict],
+    cancellation_check: CancellationCheck | None,
+) -> tuple[list[float], list[float]] | None:
     selected = _evenly_spaced(detections, APPEARANCE_SAMPLE_LIMIT)
     upper_samples: list[list[float]] = []
     lower_samples: list[list[float]] = []
     for detection in selected:
+        raise_if_cancelled(cancellation_check)
         capture.set(cv2.CAP_PROP_POS_FRAMES, int(detection["frame"]))
         success, frame = capture.read()
         if not success:

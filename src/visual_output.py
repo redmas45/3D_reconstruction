@@ -1,6 +1,8 @@
 import bisect
 import cv2
 
+from domain.cancellation import CancellationCheck, raise_if_cancelled
+
 
 CLASS_COLORS = {
     "person": (0, 220, 255),
@@ -79,6 +81,7 @@ def render_annotated_visible_chunk(
     fps,
     max_gap=25,
     visual_config=None,
+    cancellation_check: CancellationCheck | None = None,
 ):
     visual_config = visual_config or {}
     start, end = frame_range
@@ -89,6 +92,9 @@ def render_annotated_visible_chunk(
     height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     fourcc = cv2.VideoWriter_fourcc(*"mp4v")
     out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
+    if not out.isOpened():
+        cap.release()
+        raise OSError(f"Cannot create visible evidence segment: {output_path}")
 
     tracks = [
         track for track in scene_report.get("tracks", [])
@@ -101,22 +107,29 @@ def render_annotated_visible_chunk(
 
     cap.set(cv2.CAP_PROP_POS_FRAMES, start)
     frame_no = start
-    while frame_no <= end:
-        ret, frame = cap.read()
-        if not ret:
-            break
-        for track in tracks:
-            bbox = _bbox_at(track, frame_no, max_gap=max_gap)
-            if bbox is None:
-                continue
-            x1, y1, x2, y2 = [int(v) for v in bbox]
-            color = _color_for(track["class_name"])
-            cv2.rectangle(frame, (x1, y1), (x2, y2), color, box_thickness)
-            label = f"{track['class_name']} {track['id'].split('_')[-1]} | {track['direction']}"
-            _draw_label(frame, max(0, x1), max(0, y1 - 4), label, color)
-        _draw_hud(frame, f"YOLO LIVE CLASSIFICATION - {chunk_label}", f"Frame {frame_no} | visible evidence", opacity=hud_opacity)
-        out.write(frame)
-        frame_no += 1
-
-    cap.release()
-    out.release()
+    try:
+        while frame_no <= end:
+            raise_if_cancelled(cancellation_check)
+            ret, frame = cap.read()
+            if not ret:
+                raise ValueError(f"Video decoding stopped at visible frame {frame_no}")
+            for track in tracks:
+                bbox = _bbox_at(track, frame_no, max_gap=max_gap)
+                if bbox is None:
+                    continue
+                x1, y1, x2, y2 = [int(v) for v in bbox]
+                color = _color_for(track["class_name"])
+                cv2.rectangle(frame, (x1, y1), (x2, y2), color, box_thickness)
+                label = f"{track['class_name']} {track['id'].split('_')[-1]} | {track['direction']}"
+                _draw_label(frame, max(0, x1), max(0, y1 - 4), label, color)
+            _draw_hud(
+                frame,
+                f"YOLO LIVE CLASSIFICATION - {chunk_label}",
+                f"Frame {frame_no} | visible evidence",
+                opacity=hud_opacity,
+            )
+            out.write(frame)
+            frame_no += 1
+    finally:
+        cap.release()
+        out.release()

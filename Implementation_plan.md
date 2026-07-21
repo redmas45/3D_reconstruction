@@ -1214,3 +1214,22 @@ Video responses must support HTTP range requests so browser seeking works. The U
 - an unsupported upload fails cleanly without starting reconstruction
 - the layout remains usable on desktop and mobile widths
 - the top-right dark/light theme toggle follows system preference initially and remembers the operator's explicit choice
+
+## 28. Google Colab Batch Execution
+
+The cloud path uses one checked-in `colab/reconstruction.ipynb` as its operator interface. The notebook clones the current `main` branch and imports the existing application pipeline; reconstruction, evidence validation, Blender scene construction, evaluation, and stitching remain common code rather than notebook copies.
+
+The notebook must:
+
+- refuse to start expensive work when Colab has not assigned an NVIDIA GPU
+- install the pinned Blender 4.5 LTS binary, project Python requirements, and FFmpeg inside the ephemeral runtime
+- process from `/content` instead of directly against mounted Drive
+- accept one validated common-format video and derive a content-based run identifier
+- show live stage, detail, and aggregate progress emitted by the shared pipeline
+- default to two Blender gap workers on a single Colab GPU and expose a one-worker fallback for memory pressure
+- copy only complete Blender gap artifacts to Google Drive from a background checkpoint watcher
+- restore compatible completed-gap checkpoints when the same video and deterministic seed are rerun
+- save the final video and JSON reports to Google Drive before offering preview and download
+- clearly state that Colab resources and runtime duration are not guaranteed
+
+The notebook does not start `app.py`, expose a tunnel, or replace the local judge-facing browser UI. Its purpose is batch GPU execution with durable outputs while preserving the same evidence and rendering contracts.

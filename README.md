@@ -82,6 +82,12 @@ python app.py --no-browser
 
 The UI uses only Python's standard-library HTTP server and vanilla HTML, CSS, and JavaScript. No web framework or extra runtime dependency is required.
 
+## Google Colab
+
+Open or upload `colab/reconstruction.ipynb` in Google Colab, select a GPU runtime, and run its cells in order. The notebook clones this repository and calls the same `src/`, `blender/`, and `config/` pipeline used by the local interface; it does not maintain a second reconstruction implementation or expose the local web UI through a tunnel.
+
+The notebook installs Blender 4.5 LTS and FFmpeg, verifies that Colab assigned an NVIDIA GPU, accepts one common-format video upload, renders from fast `/content` storage, checkpoints completed Blender gaps to Google Drive, saves final reports and video under `MyDrive/3D_Reconstruction`, and offers a final download. Push local changes to the `main` branch before starting so the cloned runtime uses the current pipeline. If the assigned runtime runs out of memory, reduce the notebook's parallel Blender worker setting from two to one.
+
 ## Project Structure
 
 ```text
@@ -95,6 +101,7 @@ src/*.py                            Existing detection, inference, rendering, an
 web/index.html                      Accessible application shell
 web/assets/styles/                  Professional dark/cyan visual system
 web/assets/scripts/                 Typed API client, formatters, and UI controller
+colab/reconstruction.ipynb          Single-file Colab GPU batch interface
 tests/unit/                         Layered domain, application, and interface tests
 tests/test_*.py                     Existing reconstruction behavior tests
 ```

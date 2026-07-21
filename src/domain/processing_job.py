@@ -1,19 +1,30 @@
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
+from typing import TypedDict
 
 
 JOB_IDENTIFIER_PATTERN = re.compile(r"[a-f0-9]{32}")
 MINIMUM_PROGRESS = 0.0
 MAXIMUM_PROGRESS = 1.0
 SUPPORTED_RENDERER_MODES = frozenset({"blender", "2d"})
+MAXIMUM_STORED_ACTIVITY_ITEMS = 80
+
+
+class JobActivity(TypedDict):
+    timestamp: str
+    stage: str
+    detail: str
+    progress: float
 
 
 class JobStatus(str, Enum):
     QUEUED = "queued"
     PROCESSING = "processing"
+    CANCELLING = "cancelling"
+    CANCELLED = "cancelled"
     COMPLETED = "completed"
     FAILED = "failed"
 
@@ -28,6 +39,8 @@ class ProcessingStage(str, Enum):
     RENDERING = "rendering"
     EVALUATING = "evaluating"
     STITCHING = "stitching"
+    CANCELLING = "cancelling"
+    CANCELLED = "cancelled"
     COMPLETED = "completed"
     FAILED = "failed"
 
@@ -64,6 +77,8 @@ class ProcessingJob:
     output_path: Path | None = None
     error: str | None = None
     eta_seconds: int | None = None
+    progress_updated_at: str | None = None
+    activity_log: list[JobActivity] = field(default_factory=list)
     is_legacy_output: bool = False
     renderer_mode: str = "blender"
 
@@ -82,6 +97,8 @@ class ProcessingJob:
             "output_file": self.output_path.name if self.output_path else None,
             "error": self.error,
             "eta_seconds": self.eta_seconds,
+            "progress_updated_at": self.progress_updated_at,
+            "activity_log": [dict(item) for item in self.activity_log],
             "is_legacy_output": self.is_legacy_output,
             "renderer_mode": self.renderer_mode,
         }
@@ -115,6 +132,8 @@ class ProcessingJob:
             output_path=(output_dir / output_file).resolve() if output_file else None,
             error=_optional_string(payload.get("error")),
             eta_seconds=_optional_integer(payload.get("eta_seconds")),
+            progress_updated_at=_optional_string(payload.get("progress_updated_at")),
+            activity_log=_validated_activity_log(payload.get("activity_log", [])),
             is_legacy_output=bool(payload.get("is_legacy_output", False)),
             renderer_mode=validate_renderer_mode(str(payload.get("renderer_mode", "2d"))),
         )
@@ -133,3 +152,29 @@ def _optional_string(value: object) -> str | None:
 
 def _optional_integer(value: object) -> int | None:
     return None if value is None else int(value)
+
+
+def _validated_activity_log(value: object) -> list[JobActivity]:
+    if not isinstance(value, list):
+        return []
+    validated_items: list[JobActivity] = []
+    for raw_item in value[-MAXIMUM_STORED_ACTIVITY_ITEMS:]:
+        validated_item = _validated_activity_item(raw_item)
+        if validated_item is not None:
+            validated_items.append(validated_item)
+    return validated_items
+
+
+def _validated_activity_item(value: object) -> JobActivity | None:
+    if not isinstance(value, dict):
+        return None
+    try:
+        stage = ProcessingStage(str(value["stage"])).value
+        progress = float(value["progress"])
+        timestamp = str(value["timestamp"])
+        detail = str(value["detail"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    if not MINIMUM_PROGRESS <= progress <= MAXIMUM_PROGRESS or not timestamp or not detail:
+        return None
+    return {"timestamp": timestamp, "stage": stage, "detail": detail, "progress": progress}

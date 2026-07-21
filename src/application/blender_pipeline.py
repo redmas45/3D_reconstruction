@@ -2,10 +2,11 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
+from domain.cancellation import CancellationCheck
 from domain.evidence_contract import validate_visible_evidence_only
 from domain.identity_registry import build_identity_registry, write_identity_registry
 from domain.reconstruction_plan_v2 import build_reconstruction_plan_v2, write_reconstruction_plan_v2
-from infrastructure.blender_runner import BlenderRenderRequest, render_with_blender
+from infrastructure.blender_runner import BlenderProgressCallback, BlenderRenderRequest, render_with_blender
 from infrastructure.camera_motion_estimator import estimate_camera_motion
 from infrastructure.video_frames import export_video_frame
 
@@ -49,6 +50,8 @@ def render_blender_gap(
     plan_path: Path,
     gap_directory: Path,
     reuse_render: bool,
+    cancellation_check: CancellationCheck | None = None,
+    progress_callback: BlenderProgressCallback | None = None,
 ) -> Path:
     blender_directory = gap_directory / "blender"
     output_path = blender_directory / "gap_blender.mp4"
@@ -58,7 +61,12 @@ def render_blender_gap(
     if reuse_render and _render_cache_is_complete(output_path, report_path, blend_path):
         return output_path
     request = BlenderRenderRequest(plan_path, output_path, report_path, blend_path, log_path, "animation")
-    render_with_blender(project_root, request)
+    render_with_blender(
+        project_root,
+        request,
+        cancellation_check=cancellation_check,
+        progress_callback=progress_callback,
+    )
     return output_path
 
 

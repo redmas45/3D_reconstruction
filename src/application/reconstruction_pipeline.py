@@ -2,6 +2,8 @@
 
 import json
 import random
+import threading
+from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
@@ -17,6 +19,7 @@ from scene_intelligence import summarize_scene
 from stitch import stitch_sequence
 from visual_output import render_annotated_visible_chunk
 from application.blender_pipeline import prepare_blender_assets, render_blender_gap
+from domain.cancellation import CancellationCheck, raise_if_cancelled
 from domain.configuration import load_validated_configuration
 from infrastructure.media_tools import VideoContract, encode_with_source_audio, validate_video_contract
 
@@ -36,6 +39,8 @@ RENDERING_SPAN = 0.27
 EVALUATION_PROGRESS = 0.85
 STITCHING_PROGRESS = 0.94
 COMPLETED_PROGRESS = 1.0
+DEFAULT_PARALLEL_GAP_RENDERERS = 3
+BLENDER_RENDER_PROGRESS_SHARE = 0.85
 
 
 @dataclass(frozen=True)
@@ -44,6 +49,7 @@ class PipelineOptions:
     output_dir: Path
     reuse_work: bool = False
     renderer_mode: str = "blender"
+    cancellation_check: CancellationCheck | None = None
 
 
 @dataclass(frozen=True)
@@ -64,6 +70,29 @@ class TimelineRenderContext:
     configuration: dict
     reuse_work: bool
     renderer_mode: str
+    blender_rendered_paths: dict[int, Path]
+    cancellation_check: CancellationCheck | None
+
+
+class ParallelGapProgress:
+    def __init__(self, callback: ProgressCallback | None, gap_count: int, worker_count: int) -> None:
+        self._callback = callback
+        self._gap_count = max(1, gap_count)
+        self._worker_count = worker_count
+        self._fractions: dict[int, float] = {}
+        self._lock = threading.Lock()
+
+    def report(self, gap_index: int, current_frame: int, total_frames: int) -> None:
+        fraction = current_frame / max(1, total_frames)
+        with self._lock:
+            self._fractions[gap_index] = max(self._fractions.get(gap_index, 0.0), fraction)
+            overall_fraction = sum(self._fractions.values()) / self._gap_count
+        progress = RENDERING_START + RENDERING_SPAN * BLENDER_RENDER_PROGRESS_SHARE * overall_fraction
+        detail = (
+            f"Rendering gap {gap_index + 1} of {self._gap_count}: "
+            f"frame {current_frame} of {total_frames} with {self._worker_count} workers"
+        )
+        _report(self._callback, "rendering", progress, detail)
 
 
 def load_config(path: Path = DEFAULT_CONFIG_PATH) -> dict:
@@ -133,25 +162,18 @@ def _segment_path(segment_dir: Path, segment: dict) -> Path:
     return segment_dir / f"{segment['kind']}_{segment['index']:02d}_{segment['start']}_{segment['end']}.mp4"
 
 
-def write_timeline_segments(
-    video_path: Path,
+def reserve_timeline_segment_paths(
     timeline: list[dict],
     segment_dir: Path,
-    reuse_work: bool,
     progress_callback: ProgressCallback | None,
 ) -> dict[tuple[str, int], Path]:
     paths: dict[tuple[str, int], Path] = {}
-    segment_total = max(1, len(timeline))
-    for item_index, segment in enumerate(timeline):
+    for segment in timeline:
         output_path = _segment_path(segment_dir, segment)
-        if segment["kind"] == "hidden":
-            paths[(segment["kind"], segment["index"])] = output_path
-            continue
-        if not reuse_work or not output_path.exists():
-            write_video_range(video_path, segment["start"], segment["end"], output_path)
         paths[(segment["kind"], segment["index"])] = output_path
-        progress = SEGMENT_PREPARATION_START + (SEGMENT_PREPARATION_SPAN * ((item_index + 1) / segment_total))
-        _report(progress_callback, "preparing", progress, f"Prepared timeline segment {item_index + 1} of {segment_total}")
+    segment_count = len(timeline)
+    progress = SEGMENT_PREPARATION_START + SEGMENT_PREPARATION_SPAN
+    _report(progress_callback, "preparing", progress, f"Indexed {segment_count} timeline segments")
     return paths
 
 
@@ -274,13 +296,16 @@ def _render_timeline(
     sequence: list[str] = []
     evaluation_items: list[dict] = []
     timeline = context.prepared.gap_selection["timeline"]
+    timeline_start = _timeline_render_start(context.renderer_mode)
+    timeline_span = (RENDERING_START + RENDERING_SPAN) - timeline_start
     for item_index, segment in enumerate(timeline):
+        raise_if_cancelled(context.cancellation_check)
         output_path, evaluation_item = _render_timeline_segment(context, segment)
         sequence.append(str(output_path))
         if evaluation_item is not None:
             evaluation_items.append(evaluation_item)
         fraction = (item_index + 1) / max(1, len(timeline))
-        progress = RENDERING_START + (RENDERING_SPAN * fraction)
+        progress = timeline_start + (timeline_span * fraction)
         _report(progress_callback, "rendering", progress, f"Rendered timeline segment {item_index + 1} of {len(timeline)}")
     return sequence, evaluation_items
 
@@ -303,7 +328,9 @@ def _render_hidden_segment(context: TimelineRenderContext, segment: dict) -> tup
     prepared = context.prepared
     gap_index = segment["index"]
     if context.renderer_mode == "blender":
-        output_path = _render_blender_hidden_segment(context, gap_index)
+        output_path = context.blender_rendered_paths.get(gap_index)
+        if output_path is None:
+            output_path = _render_blender_hidden_segment(context, gap_index)
     else:
         output_path = _render_2d_hidden_segment(context, gap_index)
     evaluation_item = {
@@ -315,11 +342,20 @@ def _render_hidden_segment(context: TimelineRenderContext, segment: dict) -> tup
     return output_path, evaluation_item
 
 
-def _render_blender_hidden_segment(context: TimelineRenderContext, gap_index: int) -> Path:
+def _render_blender_hidden_segment(
+    context: TimelineRenderContext,
+    gap_index: int,
+    frame_progress_callback: Callable[[int, int], None] | None = None,
+) -> Path:
     prepared = context.prepared
     gap_directory = prepared.work_dir / "gaps" / f"gap_{gap_index:02d}"
     output_path = render_blender_gap(
-        ROOT, prepared.blender_plan_paths[gap_index], gap_directory, context.reuse_work,
+        ROOT,
+        prepared.blender_plan_paths[gap_index],
+        gap_directory,
+        context.reuse_work,
+        context.cancellation_check,
+        frame_progress_callback,
     )
     hidden_range = prepared.gap_selection["hidden_ranges"][gap_index]
     expected_contract = VideoContract(
@@ -330,6 +366,62 @@ def _render_blender_hidden_segment(context: TimelineRenderContext, gap_index: in
     )
     validate_video_contract(output_path, expected_contract)
     return output_path
+
+
+def _render_blender_gaps(
+    context: TimelineRenderContext,
+    progress_callback: ProgressCallback | None,
+) -> dict[int, Path]:
+    if context.renderer_mode != "blender":
+        return {}
+    raise_if_cancelled(context.cancellation_check)
+    gap_count = len(context.prepared.gap_selection["hidden_ranges"])
+    worker_count = _parallel_gap_renderer_count(context.configuration, gap_count)
+    progress_tracker = ParallelGapProgress(progress_callback, gap_count, worker_count)
+    executor = ThreadPoolExecutor(max_workers=worker_count, thread_name_prefix="blender-gap")
+    futures: dict[Future[Path], int] = {
+        executor.submit(
+            _render_blender_hidden_segment,
+            context,
+            gap_index,
+            lambda current, total, index=gap_index: progress_tracker.report(index, current, total),
+        ): gap_index
+        for gap_index in range(gap_count)
+    }
+    rendered_paths: dict[int, Path] = {}
+    try:
+        for completed_count, future in enumerate(as_completed(futures), start=1):
+            gap_index = futures[future]
+            rendered_paths[gap_index] = future.result()
+            _report_parallel_render_progress(progress_callback, completed_count, gap_count, worker_count)
+    finally:
+        executor.shutdown(wait=True, cancel_futures=True)
+    return rendered_paths
+
+
+def _parallel_gap_renderer_count(configuration: dict, gap_count: int) -> int:
+    configured_count = int(
+        configuration.get("renderer", {}).get("max_parallel_gap_renders", DEFAULT_PARALLEL_GAP_RENDERERS)
+    )
+    return max(1, min(configured_count, max(1, gap_count)))
+
+
+def _report_parallel_render_progress(
+    callback: ProgressCallback | None,
+    completed_count: int,
+    gap_count: int,
+    worker_count: int,
+) -> None:
+    fraction = completed_count / max(1, gap_count)
+    progress = RENDERING_START + (RENDERING_SPAN * BLENDER_RENDER_PROGRESS_SHARE * fraction)
+    detail = f"Rendered inferred gap {completed_count} of {gap_count} with {worker_count} parallel workers"
+    _report(callback, "rendering", progress, detail)
+
+
+def _timeline_render_start(renderer_mode: str) -> float:
+    if renderer_mode != "blender":
+        return RENDERING_START
+    return RENDERING_START + (RENDERING_SPAN * BLENDER_RENDER_PROGRESS_SHARE)
 
 
 def _render_2d_hidden_segment(context: TimelineRenderContext, gap_index: int) -> Path:
@@ -344,7 +436,12 @@ def _render_2d_hidden_segment(context: TimelineRenderContext, gap_index: int) ->
     return output_path
 
 
-def _evaluate(video_path: Path, items: list[dict], config: dict) -> dict:
+def _evaluate(
+    video_path: Path,
+    items: list[dict],
+    config: dict,
+    cancellation_check: CancellationCheck | None,
+) -> dict:
     yolo_config = config.get("yolo", {})
     evaluation_config = config.get("evaluation", {})
     if not evaluation_config.get("enabled", True):
@@ -356,6 +453,7 @@ def _evaluate(video_path: Path, items: list[dict], config: dict) -> dict:
         yolo_class_ids(config),
         normalize_confidence(yolo_config.get("confidence", 0.3)),
         evaluation_config.get("frame_stride", 12),
+        cancellation_check,
     )
 
 
@@ -376,6 +474,7 @@ def _prepare_reconstruction(
     rng: random.Random,
     progress_callback: ProgressCallback | None,
 ) -> PreparedReconstruction:
+    raise_if_cancelled(options.cancellation_check)
     config = options.config_data
     _report(progress_callback, "validating", VALIDATION_PROGRESS, "Validating video metadata")
     info = video_info(video_path)
@@ -383,13 +482,30 @@ def _prepare_reconstruction(
     work_dir = options.output_dir / "_work" / video_path.stem
     _report(progress_callback, "selecting_gaps", GAP_SELECTION_PROGRESS, "Selecting distributed 1–3 second gaps")
     selection = _load_selection(work_dir, info, config, rng, options.reuse_work)
-    segment_paths = write_timeline_segments(
-        video_path, selection["timeline"], work_dir / "segments", options.reuse_work, progress_callback,
+    segment_paths = reserve_timeline_segment_paths(
+        selection["timeline"], work_dir / "segments", progress_callback,
     )
     detections = _load_detections(
         video_path, work_dir, selection, config, options.reuse_work, progress_callback,
     )
     _report(progress_callback, "planning", PLANNING_PROGRESS, "Building scene intelligence and reconstruction plans")
+    scene_report, blender_plan_paths, plans = _prepare_scene_and_plans(
+        video_path, options, info, selection, work_dir, detections,
+    )
+    return PreparedReconstruction(
+        info, selection, segment_paths, plans, scene_report, work_dir, blender_plan_paths,
+    )
+
+
+def _prepare_scene_and_plans(
+    video_path: Path,
+    options: PipelineOptions,
+    info: dict,
+    selection: dict,
+    work_dir: Path,
+    detections: list[dict],
+) -> tuple[dict, list[Path], list[dict]]:
+    config = options.config_data
     scene_report = _build_scene_report(detections, info, selection, video_path)
     blender_plan_paths: list[Path] = []
     if options.renderer_mode == "blender":
@@ -407,9 +523,7 @@ def _prepare_reconstruction(
     plans = [] if options.renderer_mode == "blender" else _build_plans(
         scene_report, selection, info, work_dir, config.get("scene", {})
     )
-    return PreparedReconstruction(
-        info, selection, segment_paths, plans, scene_report, work_dir, blender_plan_paths,
-    )
+    return scene_report, blender_plan_paths, plans
 
 
 def _render_and_finalize(
@@ -419,20 +533,64 @@ def _render_and_finalize(
     progress_callback: ProgressCallback | None,
 ) -> Path:
     _report(progress_callback, "rendering", RENDERING_START, "Rendering evidence and inferred segments")
-    render_context = TimelineRenderContext(
-        video_path, prepared, options.config_data, options.reuse_work, options.renderer_mode,
-    )
+    render_context = _prepare_timeline_render_context(video_path, options, prepared, progress_callback)
     sequence, evaluation_items = _render_timeline(render_context, progress_callback)
-    _materialize_hidden_truth(video_path, prepared)
+    _materialize_hidden_truth(video_path, prepared, options.cancellation_check)
     _report(progress_callback, "evaluating", EVALUATION_PROGRESS, "Evaluating completed reconstructions")
-    accuracy_report = _evaluate(video_path, evaluation_items, options.config_data)
+    accuracy_report = _evaluate(
+        video_path, evaluation_items, options.config_data, options.cancellation_check,
+    )
     write_json(prepared.work_dir / "accuracy_report.json", accuracy_report)
+    return _stitch_final_output(video_path, options, prepared, sequence, progress_callback)
+
+
+def _prepare_timeline_render_context(
+    video_path: Path,
+    options: PipelineOptions,
+    prepared: PreparedReconstruction,
+    progress_callback: ProgressCallback | None,
+) -> TimelineRenderContext:
+    render_context = TimelineRenderContext(
+        video_path,
+        prepared,
+        options.config_data,
+        options.reuse_work,
+        options.renderer_mode,
+        {},
+        options.cancellation_check,
+    )
+    rendered_gap_paths = _render_blender_gaps(render_context, progress_callback)
+    return TimelineRenderContext(
+        video_path,
+        prepared,
+        options.config_data,
+        options.reuse_work,
+        options.renderer_mode,
+        rendered_gap_paths,
+        options.cancellation_check,
+    )
+
+
+def _stitch_final_output(
+    video_path: Path,
+    options: PipelineOptions,
+    prepared: PreparedReconstruction,
+    sequence: list[str],
+    progress_callback: ProgressCallback | None,
+) -> Path:
     _report(progress_callback, "stitching", STITCHING_PROGRESS, "Stitching the final video")
     video_only_output = prepared.work_dir / "stitch" / "video_only.mp4"
     video_only_output.parent.mkdir(parents=True, exist_ok=True)
-    stitch_sequence(sequence, str(video_only_output), fps=prepared.video_info["fps"])
+    stitch_sequence(
+        sequence,
+        str(video_only_output),
+        fps=prepared.video_info["fps"],
+        cancellation_check=options.cancellation_check,
+    )
     final_output = options.output_dir / f"{video_path.stem}_reconstructed.mp4"
-    encode_with_source_audio(video_only_output, video_path, final_output)
+    encode_with_source_audio(
+        video_only_output, video_path, final_output, options.cancellation_check,
+    )
     validate_video_contract(final_output, VideoContract(
         prepared.video_info["width"],
         prepared.video_info["height"],
@@ -443,8 +601,13 @@ def _render_and_finalize(
     return final_output
 
 
-def _materialize_hidden_truth(video_path: Path, prepared: PreparedReconstruction) -> None:
+def _materialize_hidden_truth(
+    video_path: Path,
+    prepared: PreparedReconstruction,
+    cancellation_check: CancellationCheck | None,
+) -> None:
     for gap_index, hidden_range in enumerate(prepared.gap_selection["hidden_ranges"]):
+        raise_if_cancelled(cancellation_check)
         truth_path = prepared.segment_paths[("hidden", gap_index)]
         write_video_range(video_path, int(hidden_range[0]), int(hidden_range[1]), truth_path)
 

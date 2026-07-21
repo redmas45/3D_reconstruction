@@ -116,6 +116,7 @@
     "default_mode": "blender",
     "blender_version": "4.5 LTS",
     "preview_scale_percent": 75,
-    "production_scale_percent": 100
+    "production_scale_percent": 100,
+    "max_parallel_gap_renders": 3
   }
 }

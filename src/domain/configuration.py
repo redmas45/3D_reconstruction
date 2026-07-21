@@ -5,6 +5,7 @@ from pathlib import Path
 REQUIRED_CONFIGURATION_SECTIONS = ("yolo", "gap", "scene", "visualization", "evaluation", "renderer")
 MINIMUM_GAP_SECONDS = 0.1
 MAXIMUM_MISSING_FRACTION = 0.95
+MAXIMUM_PARALLEL_GAP_RENDERERS = 4
 
 
 class ConfigurationValidationError(ValueError):
@@ -59,6 +60,11 @@ def _validate_renderer_configuration(renderer_configuration: dict) -> None:
         scale_percent = _required_integer(renderer_configuration, field_name)
         if not 1 <= scale_percent <= 100:
             raise ConfigurationValidationError(f"renderer.{field_name} must be between 1 and 100")
+    parallel_renderers = _required_integer(renderer_configuration, "max_parallel_gap_renders")
+    if not 1 <= parallel_renderers <= MAXIMUM_PARALLEL_GAP_RENDERERS:
+        raise ConfigurationValidationError(
+            f"renderer.max_parallel_gap_renders must be between 1 and {MAXIMUM_PARALLEL_GAP_RENDERERS}"
+        )
 
 
 def _required_number(configuration: dict, field_name: str) -> float:

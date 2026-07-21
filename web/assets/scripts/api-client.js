@@ -4,10 +4,18 @@ const JOBS_ENDPOINT = "/api/jobs";
 const NO_CACHE_REQUEST = Object.freeze({ cache: "no-store" });
 
 /**
+ * @typedef {Object} JobActivity
+ * @property {string} timestamp
+ * @property {string} stage
+ * @property {string} detail
+ * @property {number} progress
+ */
+
+/**
  * @typedef {Object} ProcessingJob
  * @property {string} id
  * @property {string} source_name
- * @property {"queued"|"processing"|"completed"|"failed"} status
+ * @property {"queued"|"processing"|"cancelling"|"cancelled"|"completed"|"failed"} status
  * @property {string} stage
  * @property {number} progress
  * @property {string} detail
@@ -15,6 +23,8 @@ const NO_CACHE_REQUEST = Object.freeze({ cache: "no-store" });
  * @property {string|null} completed_at
  * @property {number} elapsed_seconds
  * @property {number|null} eta_seconds
+ * @property {"waiting"|"estimating"|"counting_down"|"recalibrating"|"finished"} eta_status
+ * @property {JobActivity[]} activity_log
  * @property {string|null} error
  * @property {string|null} output_url
  * @property {string|null} download_url
@@ -60,6 +70,17 @@ export async function deleteProcessingJob(jobId) {
   const response = await fetch(`${JOBS_ENDPOINT}/${jobId}`, { method: "DELETE" });
   const payload = await response.json();
   if (!response.ok) throw new Error(payload.error || "Deletion failed");
+}
+
+/** @param {string} jobId @returns {Promise<ProcessingJob>} */
+export async function cancelProcessingJob(jobId) {
+  const response = await fetch(`${JOBS_ENDPOINT}/${jobId}/cancel`, { method: "POST" });
+  const payload = await response.json();
+  if (!response.ok) throw new Error(payload.error || "Cancellation failed");
+  if (!payload.job || typeof payload.job.id !== "string") {
+    throw new Error("The server did not return a valid cancelled job");
+  }
+  return payload.job;
 }
 
 /**

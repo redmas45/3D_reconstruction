@@ -1,0 +1,216 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 1740" role="img" aria-labelledby="diagram-title diagram-description">
+  <title id="diagram-title">3D Reconstruction project flow by source file</title>
+  <desc id="diagram-description">Flow from browser upload through the local Python evidence pipeline, parallel Blender gap rendering, post-render evaluation, stitching, and the output gallery.</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#1789a6"/>
+    </marker>
+    <marker id="arrow-muted" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#7c8799"/>
+    </marker>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="130%">
+      <feDropShadow dx="0" dy="5" stdDeviation="7" flood-color="#0d2033" flood-opacity="0.10"/>
+    </filter>
+    <style>
+      .background { fill: #f5f8fb; }
+      .title { fill: #102038; font: 700 34px Inter, Segoe UI, sans-serif; }
+      .subtitle { fill: #53657b; font: 400 17px Inter, Segoe UI, sans-serif; }
+      .lane { fill: none; stroke: #d5deea; stroke-width: 2; stroke-dasharray: 7 8; }
+      .lane-label { fill: #678096; font: 700 13px Inter, Segoe UI, sans-serif; letter-spacing: 2px; }
+      .node { fill: #ffffff; stroke: #cbd7e5; stroke-width: 2; filter: url(#shadow); }
+      .node-ui { fill: #f2fbff; stroke: #8dd3e2; }
+      .node-evidence { fill: #f1fbf8; stroke: #8bd2bd; }
+      .node-blender { fill: #f7f3ff; stroke: #b9a4e8; }
+      .node-post { fill: #fff9ea; stroke: #e5c976; }
+      .node-output { fill: #f0fbf4; stroke: #84c99d; }
+      .node-fallback { fill: #fafbfc; stroke: #aeb8c5; stroke-dasharray: 8 7; }
+      .number { fill: #1789a6; font: 700 14px Inter, Segoe UI, sans-serif; letter-spacing: 1px; }
+      .heading { fill: #102038; font: 700 19px Inter, Segoe UI, sans-serif; }
+      .body { fill: #53657b; font: 400 14px Inter, Segoe UI, sans-serif; }
+      .file { fill: #243c59; font: 600 13px Consolas, Cascadia Mono, monospace; }
+      .small { fill: #65778c; font: 400 12px Inter, Segoe UI, sans-serif; }
+      .chip { fill: #e8f7fb; stroke: #8dd3e2; stroke-width: 1; }
+      .chip-text { fill: #176d83; font: 700 12px Inter, Segoe UI, sans-serif; letter-spacing: .5px; }
+      .arrow { fill: none; stroke: #1789a6; stroke-width: 3; marker-end: url(#arrow); }
+      .arrow-muted { fill: none; stroke: #7c8799; stroke-width: 2.5; stroke-dasharray: 8 7; marker-end: url(#arrow-muted); }
+      .barrier { fill: #fff2cb; stroke: #d7ac38; stroke-width: 2; }
+      .barrier-title { fill: #76540b; font: 700 15px Inter, Segoe UI, sans-serif; }
+      .barrier-text { fill: #76540b; font: 400 13px Inter, Segoe UI, sans-serif; }
+    </style>
+  </defs>
+
+  <rect class="background" width="1600" height="1740"/>
+  <text class="title" x="55" y="58">3D Reconstruction — Project Flow</text>
+  <text class="subtitle" x="55" y="88">One uploaded video, traced through the real source files that own each responsibility.</text>
+  <rect class="chip" x="1270" y="42" width="274" height="42" rx="21"/>
+  <text class="chip-text" x="1407" y="68" text-anchor="middle">LOCAL PIPELINE · NO OPENAI API</text>
+
+  <rect class="lane" x="40" y="115" width="1520" height="210" rx="22"/>
+  <text class="lane-label" x="63" y="142">OPERATOR + LOCAL WEB APP</text>
+
+  <g transform="translate(65 165)">
+    <rect class="node node-ui" width="330" height="125" rx="16"/>
+    <text class="number" x="22" y="28">01</text>
+    <text class="heading" x="22" y="55">Upload and choose renderer</text>
+    <text class="file" x="22" y="82">web/index.html</text>
+    <text class="file" x="22" y="103">web/assets/scripts/app.js</text>
+  </g>
+  <path class="arrow" d="M395 227 H435"/>
+  <g transform="translate(435 165)">
+    <rect class="node node-ui" width="330" height="125" rx="16"/>
+    <text class="number" x="22" y="28">02</text>
+    <text class="heading" x="22" y="55">Send local API request</text>
+    <text class="file" x="22" y="82">web/assets/scripts/api-client.js</text>
+    <text class="body" x="22" y="105">POST /api/jobs + renderer header</text>
+  </g>
+  <path class="arrow" d="M765 227 H805"/>
+  <g transform="translate(805 165)">
+    <rect class="node node-ui" width="330" height="125" rx="16"/>
+    <text class="number" x="22" y="28">03</text>
+    <text class="heading" x="22" y="55">Validate HTTP boundary</text>
+    <text class="file" x="22" y="82">src/interfaces/http/local_server.py</text>
+    <text class="body" x="22" y="105">Upload, range playback, delete API</text>
+  </g>
+  <path class="arrow" d="M1135 227 H1175"/>
+  <g transform="translate(1175 165)">
+    <rect class="node node-ui" width="330" height="125" rx="16"/>
+    <text class="number" x="22" y="28">04</text>
+    <text class="heading" x="22" y="55">Persist, queue, or cancel job</text>
+    <text class="file" x="22" y="82">src/application/processing_jobs.py</text>
+    <text class="file" x="22" y="103">src/domain/video_upload.py</text>
+  </g>
+
+  <path class="arrow" d="M1340 290 V355 H800 V390"/>
+
+  <rect class="lane" x="40" y="350" width="1520" height="430" rx="22"/>
+  <text class="lane-label" x="63" y="378">PYTHON EVIDENCE PIPELINE</text>
+
+  <g transform="translate(485 400)">
+    <rect class="node node-evidence" width="630" height="105" rx="16"/>
+    <text class="number" x="22" y="28">05 · ORCHESTRATOR</text>
+    <text class="heading" x="22" y="55">Coordinate every pipeline stage</text>
+    <text class="file" x="22" y="81">src/application/reconstruction_pipeline.py</text>
+    <text class="small" x="405" y="81">config/reconstruction_config.json</text>
+  </g>
+
+  <path class="arrow" d="M800 505 V548 H225 V570"/>
+  <g transform="translate(65 570)">
+    <rect class="node node-evidence" width="320" height="150" rx="16"/>
+    <text class="number" x="20" y="28">06</text>
+    <text class="heading" x="20" y="55">Select evidence gaps</text>
+    <text class="file" x="20" y="84">src/gap_selector.py</text>
+    <text class="body" x="20" y="110">Random 1–3 second gaps</text>
+    <text class="body" x="20" y="132">Total ≈ 25% of source frames</text>
+  </g>
+  <path class="arrow" d="M385 645 H425"/>
+  <g transform="translate(425 570)">
+    <rect class="node node-evidence" width="320" height="150" rx="16"/>
+    <text class="number" x="20" y="28">07</text>
+    <text class="heading" x="20" y="55">Detect visible evidence</text>
+    <text class="file" x="20" y="84">src/detect.py</text>
+    <text class="body" x="20" y="110">YOLO + BoT-SORT tracking</text>
+    <text class="body" x="20" y="132">Hidden ranges are never sampled</text>
+  </g>
+  <path class="arrow" d="M745 645 H785"/>
+  <g transform="translate(785 570)">
+    <rect class="node node-evidence" width="320" height="150" rx="16"/>
+    <text class="number" x="20" y="28">08</text>
+    <text class="heading" x="20" y="55">Build scene intelligence</text>
+    <text class="file" x="20" y="84">src/scene_intelligence.py</text>
+    <text class="body" x="20" y="110">Merge tracks across gaps</text>
+    <text class="body" x="20" y="132">People, vehicles, appearance</text>
+  </g>
+  <path class="arrow" d="M1105 645 H1145"/>
+  <g transform="translate(1145 570)">
+    <rect class="node node-evidence" width="390" height="150" rx="16"/>
+    <text class="number" x="20" y="28">09</text>
+    <text class="heading" x="20" y="55">Create reconstruction plans</text>
+    <text class="file" x="20" y="82">src/application/blender_pipeline.py</text>
+    <text class="file" x="20" y="104">src/domain/reconstruction_plan_v2.py</text>
+    <text class="body" x="20" y="130">Validated JSON contract per gap</text>
+  </g>
+
+  <rect class="lane" x="40" y="805" width="1520" height="430" rx="22"/>
+  <text class="lane-label" x="63" y="833">VISIBLE OUTPUT + INFERRED GAP RENDERING</text>
+
+  <path class="arrow" d="M945 720 V865 H300 V890"/>
+  <g transform="translate(65 890)">
+    <rect class="node node-evidence" width="470" height="165" rx="16"/>
+    <text class="number" x="22" y="28">10A · VISIBLE EVIDENCE</text>
+    <text class="heading" x="22" y="55">Draw evidence annotations</text>
+    <text class="file" x="22" y="84">src/visual_output.py</text>
+    <text class="body" x="22" y="111">Original visible frames + tracked labels</text>
+    <text class="body" x="22" y="136">Frames are streamed, not held as a full RAM cache</text>
+  </g>
+
+  <path class="arrow" d="M1340 720 V850 H1000 V875"/>
+  <g transform="translate(585 865)">
+    <rect class="node node-blender" width="770" height="325" rx="18"/>
+    <text class="number" x="24" y="30">10B · DEFAULT BLENDER 3D PATH</text>
+    <text class="heading" x="24" y="60">Render independent gaps with three parallel workers</text>
+    <text class="file" x="24" y="88">src/application/reconstruction_pipeline.py  →  _render_blender_gaps()</text>
+
+    <rect x="24" y="112" width="350" height="88" rx="12" fill="#ffffff" stroke="#cfc3ea"/>
+    <text class="file" x="42" y="140">src/infrastructure/blender_runner.py</text>
+    <text class="body" x="42" y="165">Launches isolated Blender subprocesses</text>
+    <text class="body" x="42" y="185">and validates required outputs</text>
+
+    <rect x="395" y="112" width="350" height="88" rx="12" fill="#ffffff" stroke="#cfc3ea"/>
+    <text class="file" x="413" y="140">blender/render_gap.py</text>
+    <text class="body" x="413" y="165">Reads plan v2, renders H.264 gap,</text>
+    <text class="body" x="413" y="185">writes .blend + render_report.json</text>
+
+    <text class="file" x="24" y="230">blender/scene_builder.py</text>
+    <text class="small" x="24" y="253">environment_builder.py · human_builder.py · vehicle_builder.py</text>
+    <text class="small" x="24" y="275">animation.py · materials.py · hud.py · frame_rate.py</text>
+    <text class="body" x="24" y="304">Builds forensic city geometry, entities, motion, lighting, confidence HUD, and exact FPS.</text>
+  </g>
+
+  <g transform="translate(65 1080)">
+    <rect class="node node-fallback" width="470" height="110" rx="16"/>
+    <text class="number" x="22" y="28">10C · OPERATOR-SELECTED FALLBACK</text>
+    <text class="file" x="22" y="58">src/reconstruction_plan.py</text>
+    <text class="file" x="22" y="80">src/evidence_compositor.py</text>
+    <text class="small" x="22" y="101">Never selected silently after a Blender failure</text>
+  </g>
+  <path class="arrow-muted" d="M300 1055 V1080"/>
+
+  <rect class="barrier" x="285" y="1260" width="1030" height="92" rx="16"/>
+  <text class="barrier-title" x="800" y="1292" text-anchor="middle">EVIDENCE BARRIER</text>
+  <text class="barrier-text" x="800" y="1318" text-anchor="middle">Hidden source frames are only materialized after every inferred gap has finished rendering.</text>
+  <text class="file" x="800" y="1340" text-anchor="middle">src/domain/evidence_contract.py + reconstruction_pipeline.py::_materialize_hidden_truth()</text>
+  <path class="arrow" d="M800 1190 V1260"/>
+
+  <rect class="lane" x="40" y="1380" width="1520" height="305" rx="22"/>
+  <text class="lane-label" x="63" y="1408">POST-RENDER EVALUATION + DELIVERY</text>
+
+  <path class="arrow" d="M800 1352 V1440 H260 V1460"/>
+  <g transform="translate(65 1460)">
+    <rect class="node node-post" width="390" height="155" rx="16"/>
+    <text class="number" x="22" y="28">11</text>
+    <text class="heading" x="22" y="55">Evaluate after rendering</text>
+    <text class="file" x="22" y="84">src/evaluate.py</text>
+    <text class="body" x="22" y="111">Boundary, detection, and similarity metrics</text>
+    <text class="body" x="22" y="134">Results cannot alter the finished inference</text>
+  </g>
+  <path class="arrow" d="M455 1538 H495"/>
+  <g transform="translate(495 1460)">
+    <rect class="node node-post" width="450" height="155" rx="16"/>
+    <text class="number" x="22" y="28">12</text>
+    <text class="heading" x="22" y="55">Stitch and restore source audio</text>
+    <text class="file" x="22" y="84">src/stitch.py</text>
+    <text class="file" x="22" y="106">src/infrastructure/media_tools.py</text>
+    <text class="body" x="22" y="133">FFmpeg H.264/AAC + final media-contract check</text>
+  </g>
+  <path class="arrow" d="M945 1538 H985"/>
+  <g transform="translate(985 1460)">
+    <rect class="node node-output" width="550" height="155" rx="16"/>
+    <text class="number" x="22" y="28">13 · COMPLETED OUTPUT</text>
+    <text class="heading" x="22" y="55">Save, play, download, or delete</text>
+    <text class="file" x="22" y="84">outputs/jobs/&lt;job-id&gt;/&lt;video&gt;_reconstructed.mp4</text>
+    <text class="file" x="22" y="106">src/application/processing_jobs.py</text>
+    <text class="body" x="22" y="133">Persists across app restarts; shareable as a standard MP4</text>
+  </g>
+
+  <text class="small" x="800" y="1715" text-anchor="middle">Solid arrows = default Blender flow · Dashed arrows = explicit 2.5D fallback</text>
+</svg>

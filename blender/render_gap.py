@@ -50,7 +50,15 @@ def render_animation(scene: bpy.types.Scene, plan: dict, output_path: Path) -> N
     scene.render.ffmpeg.constant_rate_factor = "MEDIUM"
     scene.render.ffmpeg.audio_codec = "NONE"
     scene.render.filepath = str(output_path)
-    bpy.ops.render.render(animation=True)
+    bpy.app.handlers.render_post.append(report_render_progress)
+    try:
+        bpy.ops.render.render(animation=True)
+    finally:
+        bpy.app.handlers.render_post.remove(report_render_progress)
+
+
+def report_render_progress(scene: bpy.types.Scene) -> None:
+    print(f"RECON_PROGRESS {scene.frame_current} {scene.frame_end}", flush=True)
 
 
 def write_report(

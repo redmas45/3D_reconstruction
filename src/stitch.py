@@ -1,6 +1,8 @@
 import cv2
 import os
 
+from domain.cancellation import CancellationCheck, raise_if_cancelled
+
 def _read_all_frames(video_path: str, width: int, height: int) -> list:
     """Reads an entire video into a list of resized frames (requires enough RAM)."""
     cap = cv2.VideoCapture(video_path)
@@ -38,18 +40,27 @@ def _add_label(frame, label, color, frame_idx):
     return frame
 
 
-def _write_stream(writer: cv2.VideoWriter, video_path: str, width: int, height: int) -> int:
+def _write_stream(
+    writer: cv2.VideoWriter,
+    video_path: str,
+    width: int,
+    height: int,
+    cancellation_check: CancellationCheck | None = None,
+) -> int:
     cap = cv2.VideoCapture(video_path)
     frame_count = 0
-    while True:
-        ret, frame = cap.read()
-        if not ret:
-            break
-        if frame.shape[1] != width or frame.shape[0] != height:
-            frame = cv2.resize(frame, (width, height))
-        writer.write(frame)
-        frame_count += 1
-    cap.release()
+    try:
+        while True:
+            raise_if_cancelled(cancellation_check)
+            ret, frame = cap.read()
+            if not ret:
+                break
+            if frame.shape[1] != width or frame.shape[0] != height:
+                frame = cv2.resize(frame, (width, height))
+            writer.write(frame)
+            frame_count += 1
+    finally:
+        cap.release()
     return frame_count
 
 def stitch_videos(
@@ -147,7 +158,12 @@ def stitch_videos(
     print(f"[Stitcher] Successfully saved final stitched video ({total_frames} frames) to {output_path}.")
 
 
-def stitch_sequence(video_paths: list, output_path: str, fps: float = 30.0) -> None:
+def stitch_sequence(
+    video_paths: list[str],
+    output_path: str,
+    fps: float = 30.0,
+    cancellation_check: CancellationCheck | None = None,
+) -> None:
     """Streams a list of same-sized videos into one output video."""
     if not video_paths:
         raise ValueError("No video paths provided to stitch_sequence")
@@ -162,7 +178,9 @@ def stitch_sequence(video_paths: list, output_path: str, fps: float = 30.0) -> N
     fourcc = cv2.VideoWriter_fourcc(*"mp4v")
     out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
     total = 0
-    for path in video_paths:
-        total += _write_stream(out, path, width, height)
-    out.release()
+    try:
+        for path in video_paths:
+            total += _write_stream(out, path, width, height, cancellation_check)
+    finally:
+        out.release()
     print(f"[Stitcher] Saved {output_path} ({total} frames).")

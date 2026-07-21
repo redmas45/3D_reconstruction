@@ -64,7 +64,10 @@ The interface opens at `http://127.0.0.1:8000` and provides:
 
 - browse and drag-and-drop upload for common video formats
 - a persisted one-at-a-time processing queue
-- live reconstruction stage, progress, elapsed time, and best-effort ETA
+- expandable live activity with completed, active, and pending stages plus persisted pipeline messages
+- per-frame Blender worker updates aggregated across all active gap renders
+- live progress and elapsed time with an ETA that counts down between updates and reports when it is recalculating
+- responsive cancellation for queued jobs, Python stages, Blender gap workers, and FFmpeg encoding
 - in-browser playback and download for new jobs and existing reconstructed outputs
 - confirmed deletion of the output, work directory, and retained upload
 - persistent dark/light theme toggle in the top-right navigation
@@ -113,10 +116,13 @@ The primary settings are in `config/reconstruction_config.json`:
   "renderer": {
     "default_mode": "blender",
     "blender_version": "4.5 LTS",
-    "production_scale_percent": 100
+    "production_scale_percent": 100,
+    "max_parallel_gap_renders": 3
   }
 }
 ```
+
+The UI accepts fractional source rates such as 29.97 and 59.94 fps. The job manager keeps one full video reconstruction active at a time. Within that job, a bounded three-thread pool launches up to three independent Blender subprocesses for separate gaps. Raise this setting only after measuring memory and render-device pressure. Source frames remain streamed instead of being held as an uncompressed full-video RAM cache.
 
 YOLO uses sequential BoT-SORT tracking with camera-motion compensation. The scene-intelligence stage performs dependency-free appearance matching across gaps. Tracker configuration lives in `config/botsort_reid.yaml`. Confidence values must be between `0` and `1`; values greater than `1` are interpreted as percentages.
 

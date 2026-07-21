@@ -2,6 +2,8 @@ import cv2
 import numpy as np
 from ultralytics import YOLO
 
+from domain.cancellation import CancellationCheck, raise_if_cancelled
+
 
 def _ssim(first: np.ndarray, second: np.ndarray) -> float:
     first_gray = cv2.cvtColor(first, cv2.COLOR_BGR2GRAY).astype(np.float64)
@@ -194,12 +196,13 @@ def evaluate_reconstructions(
     class_ids: list[int],
     confidence: float,
     frame_stride: int,
+    cancellation_check: CancellationCheck | None = None,
 ) -> dict:
     model = YOLO(model_name)
-    reports = [
-        _evaluate_gap(item, source_path, model, class_ids, confidence, frame_stride)
-        for item in items
-    ]
+    reports = []
+    for item in items:
+        raise_if_cancelled(cancellation_check)
+        reports.append(_evaluate_gap(item, source_path, model, class_ids, confidence, frame_stride))
     return {
         "mode": "post_reconstruction_hidden_truth_evaluation",
         "ground_truth_usage": "Hidden frames were read only after every reconstruction completed.",

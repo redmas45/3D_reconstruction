@@ -1,11 +1,11 @@
 import math
-from fractions import Fraction
 
 import bpy
 from mathutils import Vector
 
 from animation import animate_entity
 from environment_builder import build_environment, build_path_trail
+from frame_rate import blender_frame_rate
 from hud import build_hud
 from human_builder import build_human
 from vehicle_builder import build_vehicle
@@ -51,9 +51,9 @@ def configure_render(scene: bpy.types.Scene, plan: dict) -> None:
     scene.render.resolution_percentage = int(
         render_contract.get("preview_scale_percent", DEFAULT_RENDER_SCALE_PERCENT)
     )
-    frame_rate = Fraction(float(plan["fps"])).limit_denominator(1_001)
-    scene.render.fps = frame_rate.numerator
-    scene.render.fps_base = frame_rate.denominator
+    nominal_fps, fps_base = blender_frame_rate(float(plan["fps"]))
+    scene.render.fps = nominal_fps
+    scene.render.fps_base = fps_base
     scene.render.image_settings.file_format = "PNG"
     scene.render.film_transparent = False
     scene.world.color = (0.006, 0.010, 0.018)

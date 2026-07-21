@@ -19,6 +19,7 @@ sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
 from application.processing_jobs import JobManager
 from application.reconstruction_pipeline import PipelineOptions, ProgressCallback
+from domain.cancellation import raise_if_cancelled
 from interfaces.http.local_server import build_server
 
 
@@ -44,6 +45,9 @@ def copy_video_processor(
     del random_generator
     if progress_callback is not None:
         progress_callback("rendering", 0.8, "Creating HTTP fixture output")
+    for _ in range(15):
+        raise_if_cancelled(options.cancellation_check)
+        time.sleep(0.01)
     output_path = options.output_dir / f"{video_path.stem}_reconstructed.mp4"
     shutil.copyfile(video_path, output_path)
     return output_path
@@ -108,7 +112,9 @@ class LocalServerTests(unittest.TestCase):
         with urlopen(f"{self.base_url}/assets/styles/app.css", timeout=REQUEST_TIMEOUT_SECONDS) as response:
             self.assertIn(b'[data-theme="light"]', response.read())
         with urlopen(f"{self.base_url}/assets/scripts/api-client.js", timeout=REQUEST_TIMEOUT_SECONDS) as response:
-            self.assertIn(b'X-Renderer-Mode', response.read())
+            api_client_content = response.read()
+            self.assertIn(b'X-Renderer-Mode', api_client_content)
+            self.assertIn(b'cancelProcessingJob', api_client_content)
         with urlopen(f"{self.base_url}/assets/icons/favicon.svg", timeout=REQUEST_TIMEOUT_SECONDS) as response:
             self.assertEqual(200, response.status)
 
@@ -124,12 +130,30 @@ class LocalServerTests(unittest.TestCase):
         self.assertEqual(400, context.exception.code)
         self.assertEqual([], self.manager.list_jobs())
 
+    def test_active_job_can_be_cancelled_through_api(self) -> None:
+        video_bytes = create_test_video(self.temporary_root / "cancel-fixture.mp4")
+        upload_request = Request(
+            f"{self.base_url}/api/jobs",
+            data=video_bytes,
+            method="POST",
+            headers={"X-File-Name": "cancel-video.mp4", "Content-Type": "video/mp4"},
+        )
+        with urlopen(upload_request, timeout=REQUEST_TIMEOUT_SECONDS) as response:
+            job_id = json.load(response)["job"]["id"]
+
+        cancel_request = Request(f"{self.base_url}/api/jobs/{job_id}/cancel", method="POST", data=b"")
+        with urlopen(cancel_request, timeout=REQUEST_TIMEOUT_SECONDS) as response:
+            self.assertEqual(202, response.status)
+
+        cancelled_job = self._wait_for_completion(job_id)
+        self.assertEqual("cancelled", cancelled_job["status"])
+
     def _wait_for_completion(self, job_id: str) -> dict:
         deadline = time.monotonic() + JOB_COMPLETION_TIMEOUT_SECONDS
         while time.monotonic() < deadline:
             with urlopen(f"{self.base_url}/api/jobs/{job_id}", timeout=REQUEST_TIMEOUT_SECONDS) as response:
                 job = json.load(response)["job"]
-            if job["status"] in {"completed", "failed"}:
+            if job["status"] in {"completed", "failed", "cancelled"}:
                 return job
             time.sleep(0.02)
         self.fail("HTTP processing job did not complete before the test timeout")

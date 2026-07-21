@@ -1,12 +1,20 @@
 import sys
+import time
 import unittest
 from pathlib import Path
+from unittest.mock import MagicMock
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
-from infrastructure.blender_runner import BlenderRenderRequest, build_blender_command
+from domain.cancellation import CancellationRequestedError
+from infrastructure.blender_runner import (
+    BlenderRenderRequest,
+    _parse_progress_line,
+    _wait_for_blender,
+    build_blender_command,
+)
 
 
 class BlenderRunnerTests(unittest.TestCase):
@@ -25,6 +33,21 @@ class BlenderRunnerTests(unittest.TestCase):
         self.assertEqual("--background", command[1])
         self.assertIn(str(Path("plan.json").resolve()), command)
         self.assertEqual("preview", command[-1])
+
+    def test_running_blender_process_is_terminated_on_cancellation(self) -> None:
+        process = MagicMock()
+        process.poll.return_value = None
+        process.wait.return_value = 0
+
+        with self.assertRaises(CancellationRequestedError):
+            _wait_for_blender(process, time.monotonic() + 10.0, 10, lambda: True)
+
+        process.terminate.assert_called_once_with()
+
+    def test_progress_marker_reports_bounded_frame_counts(self) -> None:
+        self.assertEqual((17, 90), _parse_progress_line("RECON_PROGRESS 17 90\n"))
+        self.assertEqual((90, 90), _parse_progress_line("RECON_PROGRESS 100 90\n"))
+        self.assertIsNone(_parse_progress_line("Fra:17 Mem:120.0M"))
 
 
 if __name__ == "__main__":

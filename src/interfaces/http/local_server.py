@@ -18,6 +18,7 @@ JOBS_API_PATH = "/api/jobs"
 STATIC_ASSET_PREFIX = "/assets/"
 INDEX_REQUEST_PATHS = frozenset({"/", "/index.html"})
 JOB_PATH_PATTERN = re.compile(r"^/api/jobs/([a-f0-9]{32})$")
+JOB_CANCEL_PATH_PATTERN = re.compile(r"^/api/jobs/([a-f0-9]{32})/cancel$")
 OUTPUT_PATH_PATTERN = re.compile(r"^/api/outputs/([a-f0-9]{32})$")
 FILE_STREAM_CHUNK_BYTES = 1024 * 1024
 
@@ -57,6 +58,10 @@ class ReconstructionRequestHandler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         request = urlparse(self.path)
+        cancel_match = JOB_CANCEL_PATH_PATTERN.fullmatch(request.path)
+        if cancel_match:
+            self._cancel_job(cancel_match.group(1))
+            return
         if request.path != JOBS_API_PATH:
             self._send_error(HTTPStatus.NOT_FOUND, "Endpoint was not found")
             return
@@ -71,6 +76,17 @@ class ReconstructionRequestHandler(BaseHTTPRequestHandler):
         except OSError:
             LOGGER.exception("Could not save uploaded video %s", source_name)
             self._send_error(HTTPStatus.INTERNAL_SERVER_ERROR, "The upload could not be saved")
+            return
+        self._send_json(HTTPStatus.ACCEPTED, {"job": job})
+
+    def _cancel_job(self, job_id: str) -> None:
+        try:
+            job = self.server.manager.cancel_job(job_id)
+        except JobNotFoundError as error:
+            self._send_error(HTTPStatus.NOT_FOUND, str(error))
+            return
+        except JobConflictError as error:
+            self._send_error(HTTPStatus.CONFLICT, str(error))
             return
         self._send_json(HTTPStatus.ACCEPTED, {"job": job})
 

@@ -4,13 +4,16 @@
 
 This is the approved, living implementation plan for the AI evidence-gap reconstruction project. It records the target architecture, acceptance gates, completed work, measured results, and remaining validation work.
 
-### Implementation status — 20 July 2026
+### Implementation status — 21 July 2026
 
 - Phase 0 is implemented: the OpenCV 2.5D renderer remains an explicit fallback, Blender 4.5 LTS runs headlessly through a JSON-only boundary, and real preview/production timings are recorded.
 - Phase 1 is implemented and unit tested: plan v2, visible-only evidence validation, delayed hidden-truth materialization, global identity registry, static/dynamic camera measurement, robust height priors, forward-predicted three-point paths, soft post-gap residuals, crossing-appearance rejection, heading-conflict downgrades, and formal presentation filtering.
 - Phase 2 is implemented and visually reviewed: calibrated forensic camera, ground plane, city-street proxies, evidence inset, procedural people/vehicles, confidence HUD, and midpoint rendering.
 - Phase 3 is implemented and technically verified on gap 0 and a short end-to-end fixture: articulated motion, lifecycle fades, confidence-to-fidelity tiers, forensic entry/exit shutter, exact frame count, exact fractional frame rate, and full-resolution Blender encoding.
 - UI/pipeline integration is implemented: Blender is the default selectable renderer, 2.5D is an explicit fallback, errors do not silently switch renderers, progress is surfaced through the existing queue, FFmpeg preserves source audio, and final media contracts are validated.
+- Arbitrary-video hardening now covers 59.94 fps sources without Blender's integer FPS clamp, uses three configurable parallel Blender gap workers, and avoids writing unused raw visible-segment copies. Full videos remain streamed so the 32 GB workstation retains memory headroom for YOLO, Blender, and the operating system.
+- Windows job metadata persistence uses unique temporary files and bounded retry/backoff so transient antivirus or indexing locks cannot fail a reconstruction; instant preparation stages emit one persisted update instead of a rapid write burst.
+- Active and queued jobs can be cancelled from the UI. Cancellation is propagated through Python checkpoints and terminates active Blender and FFmpeg subprocesses; cancelled jobs remain removable but are never mislabeled as failures.
 - Phase 4 (three representative gaps), Phase 5 (full `input_vid3.mp4`), Phase 6 final judge polish, and Phase 7 second-video validation remain approval gates. They are not represented as complete.
 
 Measured verification artifacts:
@@ -1158,12 +1161,23 @@ Provide one clean local interface that a judge or operator can use without termi
 
 ### Processing experience
 
-- show queued, validating, selecting gaps, detecting/tracking, planning, rendering, evaluating, stitching, completed, and failed stages
+- show queued, validating, selecting gaps, detecting/tracking, planning, rendering, evaluating, stitching, cancelling, cancelled, completed, and failed stages
 - expose real stage progress from the Python pipeline rather than a purely decorative percentage
-- show elapsed time and a clearly labeled best-effort ETA derived from observed progress
-- keep an animated reconstruction visual active while work continues
+- show elapsed time and a clearly labeled best-effort ETA derived from observed progress; count it down between pipeline updates and switch to `recalculating` when an in-flight task exceeds the latest estimate
+- provide an expandable live-activity panel per job with completed, active, and pending stages, per-stage percentage, timestamps, and recent persisted pipeline messages
+- stream Blender frame markers from every active worker into aggregate render progress so a long individual gap does not leave the percentage visually frozen
+- open the live-activity panel automatically for a newly submitted reconstruction
 - poll local job state without reloading the page and preserve completed job metadata across server restarts
 - surface clean errors in the UI while retaining detailed local logs
+- expose a cancel action for queued and processing jobs; show `cancelling` until active Blender/FFmpeg processes have stopped
+- keep one top-level video job active at a time while rendering up to three independent Blender gaps concurrently through bounded worker threads and separate Blender subprocesses
+
+### Page layout
+
+- keep the upload workflow as the full-width horizontal first step on desktop and stack it cleanly on narrow screens
+- present the 1–3 second gap, approximately 25% inference, three-worker rendering, and local-processing contract as compact inline facts
+- omit non-functional decorative engine panels so screen space is reserved for upload controls, live progress, and outputs
+- use restrained type sizes, consistent spacing, and the supplied dark/cyan visual language in both light and dark themes
 
 ### Output gallery
 
@@ -1180,6 +1194,7 @@ GET    /api/health
 GET    /api/jobs
 POST   /api/jobs
 GET    /api/jobs/<job_id>
+POST   /api/jobs/<job_id>/cancel
 GET    /api/outputs/<job_id>
 DELETE /api/jobs/<job_id>
 ```
@@ -1190,6 +1205,9 @@ Video responses must support HTTP range requests so browser seeking works. The U
 
 - a supported test video can be uploaded without using the terminal
 - progress, current stage, elapsed time, and ETA update while processing
+- the ETA continues changing between stage updates and clearly reports when it is recalculating
+- the live-activity dropdown identifies completed, active, and pending work and preserves its open state across polling refreshes
+- cancellation stops active reconstruction processes and reaches a terminal cancelled state without deleting unrelated outputs
 - a completed output appears automatically and plays in the browser
 - download returns the physical output file
 - confirmed deletion removes the record and all job-owned files from disk

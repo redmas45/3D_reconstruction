@@ -6,6 +6,7 @@ import logging
 import random
 import shutil
 import threading
+import time
 import uuid
 from concurrent.futures import Future, ThreadPoolExecutor
 from datetime import datetime, timezone
@@ -13,8 +14,11 @@ from pathlib import Path
 from typing import BinaryIO, Callable
 
 from application.reconstruction_pipeline import PipelineOptions, ProgressCallback, process_video, video_info
+from domain.cancellation import CancellationRequestedError, raise_if_cancelled
 from domain.processing_job import (
+    JobActivity,
     JobStatus,
+    MAXIMUM_STORED_ACTIVITY_ITEMS,
     ProcessingJob,
     ProcessingStage,
     utc_now,
@@ -31,6 +35,8 @@ from domain.video_upload import (
 
 LOGGER = logging.getLogger(__name__)
 Processor = Callable[[Path, PipelineOptions, random.Random, ProgressCallback | None], Path]
+METADATA_REPLACE_ATTEMPTS = 8
+METADATA_RETRY_BASE_SECONDS = 0.05
 
 
 class JobNotFoundError(LookupError):
@@ -61,6 +67,7 @@ class JobManager:
         self.output_root.mkdir(parents=True, exist_ok=True)
         self._jobs: dict[str, ProcessingJob] = {}
         self._futures: dict[str, Future[None]] = {}
+        self._cancellation_events: dict[str, threading.Event] = {}
         self._lock = threading.RLock()
         self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="reconstruction")
         self._load_existing_jobs()
@@ -97,6 +104,8 @@ class JobManager:
         )
         with self._lock:
             self._jobs[job_id] = record
+            self._cancellation_events[job_id] = threading.Event()
+            self._record_activity(record)
             self._persist(record)
             self._futures[job_id] = self._executor.submit(self._execute, job_id)
             return self._public_record(record)
@@ -120,8 +129,8 @@ class JobManager:
     def delete_job(self, job_id: str) -> None:
         with self._lock:
             record = self._require_job(job_id)
-            if record.status in {JobStatus.QUEUED, JobStatus.PROCESSING}:
-                raise JobConflictError("A queued or processing job cannot be deleted")
+            if record.status in {JobStatus.QUEUED, JobStatus.PROCESSING, JobStatus.CANCELLING}:
+                raise JobConflictError("Cancel the active job before deleting it")
             input_dir = record.input_path.parent
             output_dir = record.output_dir
         if record.is_legacy_output:
@@ -131,8 +140,31 @@ class JobManager:
         with self._lock:
             self._jobs.pop(job_id, None)
             self._futures.pop(job_id, None)
+            self._cancellation_events.pop(job_id, None)
+
+    def cancel_job(self, job_id: str) -> dict:
+        with self._lock:
+            record = self._require_job(job_id)
+            if record.status not in {JobStatus.QUEUED, JobStatus.PROCESSING}:
+                raise JobConflictError("Only a queued or processing job can be cancelled")
+            cancellation_event = self._cancellation_events[job_id]
+            cancellation_event.set()
+            future = self._futures.get(job_id)
+            if record.status is JobStatus.QUEUED and future is not None and future.cancel():
+                self._mark_cancelled(record)
+                return self._public_record(record)
+            record.status = JobStatus.CANCELLING
+            record.stage = ProcessingStage.CANCELLING
+            record.detail = "Stopping active reconstruction processes"
+            record.eta_seconds = None
+            self._record_activity(record)
+            self._persist(record)
+            return self._public_record(record)
 
     def shutdown(self) -> None:
+        with self._lock:
+            for cancellation_event in self._cancellation_events.values():
+                cancellation_event.set()
         self._executor.shutdown(wait=False, cancel_futures=False)
 
     def _write_upload(self, reader: BinaryIO, input_path: Path, content_length: int) -> None:
@@ -146,32 +178,66 @@ class JobManager:
                 remaining -= len(chunk)
 
     def _execute(self, job_id: str) -> None:
-        with self._lock:
-            record = self._require_job(job_id)
-            record.status = JobStatus.PROCESSING
-            record.stage = ProcessingStage.VALIDATING
-            record.detail = "Starting reconstruction"
-            record.started_at = utc_now()
-            self._persist(record)
-
-        def update(stage: str, progress: float, detail: str) -> None:
-            self._update_progress(job_id, stage, progress, detail)
-
+        started_job = self._begin_job(job_id)
+        if started_job is None:
+            return
+        record, cancellation_event = started_job
         try:
-            options = PipelineOptions(
-                self.config_data,
-                record.output_dir,
-                reuse_work=False,
-                renderer_mode=record.renderer_mode,
-            )
-            rng = random.Random(int(job_id[:16], 16))
-            output_path = self.processor(record.input_path, options, rng, update)
+            output_path = self._run_processor(job_id, record, cancellation_event)
+        except CancellationRequestedError:
+            LOGGER.info("Reconstruction job %s was cancelled", job_id)
+            self._cancel_running_job(job_id)
+            return
         except Exception as error:
             LOGGER.exception("Reconstruction job %s failed for %s", job_id, record.source_name)
             self._fail_job(job_id, str(error) or error.__class__.__name__)
             raise
+        self._complete_job(job_id, output_path)
+
+    def _begin_job(self, job_id: str) -> tuple[ProcessingJob, threading.Event] | None:
         with self._lock:
             record = self._require_job(job_id)
+            cancellation_event = self._cancellation_events[job_id]
+            if cancellation_event.is_set():
+                self._mark_cancelled(record)
+                return None
+            record.status = JobStatus.PROCESSING
+            record.stage = ProcessingStage.VALIDATING
+            record.detail = "Starting reconstruction"
+            record.started_at = utc_now()
+            record.progress_updated_at = record.started_at
+            self._record_activity(record)
+            self._persist(record)
+            return record, cancellation_event
+
+    def _run_processor(
+        self,
+        job_id: str,
+        record: ProcessingJob,
+        cancellation_event: threading.Event,
+    ) -> Path:
+        def update(stage: str, progress: float, detail: str) -> None:
+            raise_if_cancelled(cancellation_event.is_set)
+            self._update_progress(job_id, stage, progress, detail)
+
+        options = PipelineOptions(
+            self.config_data,
+            record.output_dir,
+            reuse_work=False,
+            renderer_mode=record.renderer_mode,
+            cancellation_check=cancellation_event.is_set,
+        )
+        rng = random.Random(int(job_id[:16], 16))
+        output_path = self.processor(record.input_path, options, rng, update)
+        raise_if_cancelled(cancellation_event.is_set)
+        return output_path
+
+    def _complete_job(self, job_id: str, output_path: Path) -> None:
+        with self._lock:
+            record = self._require_job(job_id)
+            if record.status is JobStatus.CANCELLING:
+                self._mark_cancelled(record)
+                return
             record.status = JobStatus.COMPLETED
             record.stage = ProcessingStage.COMPLETED
             record.progress = 1.0
@@ -179,15 +245,38 @@ class JobManager:
             record.completed_at = utc_now()
             record.output_path = output_path.resolve()
             record.eta_seconds = 0
+            record.progress_updated_at = record.completed_at
+            self._record_activity(record)
             self._persist(record)
+
+    def _cancel_running_job(self, job_id: str) -> None:
+        with self._lock:
+            self._mark_cancelled(self._require_job(job_id))
+
+    def _mark_cancelled(self, record: ProcessingJob) -> None:
+        record.status = JobStatus.CANCELLED
+        record.stage = ProcessingStage.CANCELLED
+        record.detail = "Reconstruction cancelled"
+        record.completed_at = utc_now()
+        record.error = None
+        record.eta_seconds = None
+        record.progress_updated_at = record.completed_at
+        self._record_activity(record)
+        self._persist(record)
 
     def _update_progress(self, job_id: str, stage: str, progress: float, detail: str) -> None:
         with self._lock:
             record = self._require_job(job_id)
+            if record.status is JobStatus.CANCELLING:
+                raise CancellationRequestedError("Reconstruction was cancelled by the operator")
+            next_progress = max(record.progress, min(0.99, progress))
             record.stage = ProcessingStage(stage)
-            record.progress = max(record.progress, min(0.99, progress))
+            if next_progress > record.progress:
+                record.progress_updated_at = utc_now()
+            record.progress = next_progress
             record.detail = detail
             record.eta_seconds = self._estimate_eta(record)
+            self._record_activity(record)
             self._persist(record)
 
     def _fail_job(self, job_id: str, message: str) -> None:
@@ -199,6 +288,8 @@ class JobManager:
             record.error = message
             record.completed_at = utc_now()
             record.eta_seconds = None
+            record.progress_updated_at = record.completed_at
+            self._record_activity(record)
             self._persist(record)
 
     def _estimate_eta(self, record: ProcessingJob) -> int | None:
@@ -212,6 +303,7 @@ class JobManager:
     def _public_record(self, record: ProcessingJob) -> dict:
         output_exists = record.output_path is not None and record.output_path.is_file()
         elapsed_seconds = self._elapsed_seconds(record)
+        live_eta_seconds, eta_status = self._live_eta(record)
         return {
             "id": record.job_id,
             "source_name": record.source_name,
@@ -222,7 +314,9 @@ class JobManager:
             "created_at": record.created_at,
             "completed_at": record.completed_at,
             "elapsed_seconds": elapsed_seconds,
-            "eta_seconds": record.eta_seconds,
+            "eta_seconds": live_eta_seconds,
+            "eta_status": eta_status,
+            "activity_log": [dict(item) for item in record.activity_log],
             "error": record.error,
             "output_url": f"/api/outputs/{record.job_id}" if output_exists else None,
             "download_url": f"/api/outputs/{record.job_id}?download=1" if output_exists else None,
@@ -230,6 +324,36 @@ class JobManager:
             "is_legacy_output": record.is_legacy_output,
             "renderer_mode": record.renderer_mode,
         }
+
+    @staticmethod
+    def _live_eta(record: ProcessingJob) -> tuple[int | None, str]:
+        if record.status is JobStatus.QUEUED:
+            return None, "waiting"
+        if record.status in {JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED}:
+            return 0, "finished"
+        if record.eta_seconds is None or record.progress_updated_at is None:
+            return None, "estimating"
+        try:
+            updated_at = datetime.fromisoformat(record.progress_updated_at)
+        except ValueError:
+            return None, "estimating"
+        estimate_age = max(0.0, (datetime.now(timezone.utc) - updated_at).total_seconds())
+        remaining_seconds = record.eta_seconds - estimate_age
+        if remaining_seconds <= 0:
+            return None, "recalibrating"
+        return int(round(remaining_seconds)), "counting_down"
+
+    def _record_activity(self, record: ProcessingJob) -> None:
+        activity: JobActivity = {
+            "timestamp": utc_now(),
+            "stage": record.stage.value,
+            "detail": record.detail,
+            "progress": round(record.progress, 4),
+        }
+        if record.activity_log and _same_activity(record.activity_log[-1], activity):
+            return
+        record.activity_log.append(activity)
+        del record.activity_log[:-MAXIMUM_STORED_ACTIVITY_ITEMS]
 
     def _elapsed_seconds(self, record: ProcessingJob) -> int:
         if record.started_at is None:
@@ -240,10 +364,13 @@ class JobManager:
 
     def _persist(self, record: ProcessingJob) -> None:
         metadata_path = record.output_dir / "job.json"
-        temporary_path = record.output_dir / "job.json.tmp"
-        with temporary_path.open("w", encoding="utf-8") as metadata_file:
-            json.dump(record.to_storage_payload(), metadata_file, indent=2)
-        temporary_path.replace(metadata_path)
+        temporary_path = record.output_dir / f"job.{uuid.uuid4().hex}.tmp"
+        try:
+            with temporary_path.open("w", encoding="utf-8") as metadata_file:
+                json.dump(record.to_storage_payload(), metadata_file, indent=2)
+            _replace_metadata_file(temporary_path, metadata_path)
+        finally:
+            temporary_path.unlink(missing_ok=True)
 
     def _load_existing_jobs(self) -> None:
         for metadata_path in self.output_root.glob("*/job.json"):
@@ -258,8 +385,13 @@ class JobManager:
                 record.stage = ProcessingStage.FAILED
                 record.error = "Processing was interrupted when the local server stopped"
                 record.completed_at = utc_now()
+                record.progress_updated_at = record.completed_at
+                self._record_activity(record)
                 self._persist(record)
+            elif record.status is JobStatus.CANCELLING:
+                self._mark_cancelled(record)
             self._jobs[record.job_id] = record
+            self._cancellation_events[record.job_id] = threading.Event()
 
     def _load_legacy_outputs(self) -> None:
         if self.legacy_output_root is None or not self.legacy_output_root.exists():
@@ -321,3 +453,18 @@ class JobManager:
             raise ValueError(f"Refusing to delete unmanaged path: {resolved_target}")
         if resolved_target.exists():
             shutil.rmtree(resolved_target)
+
+
+def _replace_metadata_file(temporary_path: Path, metadata_path: Path) -> None:
+    for attempt_index in range(METADATA_REPLACE_ATTEMPTS):
+        try:
+            temporary_path.replace(metadata_path)
+            return
+        except PermissionError:
+            if attempt_index == METADATA_REPLACE_ATTEMPTS - 1:
+                raise
+            time.sleep(METADATA_RETRY_BASE_SECONDS * (attempt_index + 1))
+
+
+def _same_activity(first: JobActivity, second: JobActivity) -> bool:
+    return all(first[field_name] == second[field_name] for field_name in ("stage", "detail", "progress"))

@@ -1,6 +1,6 @@
 // @ts-check
 
-import { deleteProcessingJob, fetchProcessingJobs, uploadVideoJob } from "./api-client.js";
+import { cancelProcessingJob, deleteProcessingJob, fetchProcessingJobs, uploadVideoJob } from "./api-client.js";
 import { errorMessage, extractFileExtension, formatByteCount, formatDuration } from "./formatters.js";
 
 const SUPPORTED_EXTENSIONS = new Set(["mp4", "mov", "avi", "mkv", "m4v", "webm", "mpeg", "mpg", "wmv"]);
@@ -17,9 +17,21 @@ const STAGE_LABELS = {
   rendering: "Rendering",
   evaluating: "Evaluating",
   stitching: "Stitching",
+  cancelling: "Cancelling",
+  cancelled: "Cancelled",
   completed: "Completed",
   failed: "Failed",
 };
+const PIPELINE_STEPS = Object.freeze([
+  { stage: "validating", label: "Validate input", start: 0, end: 0.04 },
+  { stage: "selecting_gaps", label: "Select evidence gaps", start: 0.04, end: 0.06 },
+  { stage: "preparing", label: "Prepare boundary evidence", start: 0.06, end: 0.13 },
+  { stage: "detecting", label: "Detect and track entities", start: 0.13, end: 0.5 },
+  { stage: "planning", label: "Build forensic 3D plans", start: 0.5, end: 0.55 },
+  { stage: "rendering", label: "Render gaps with 3 workers", start: 0.55, end: 0.85 },
+  { stage: "evaluating", label: "Evaluate inferred gaps", start: 0.85, end: 0.94 },
+  { stage: "stitching", label: "Stitch video and audio", start: 0.94, end: 1 },
+]);
 
 const elements = {
   videoInput: /** @type {HTMLInputElement} */ (requiredElement("#video-input")),
@@ -53,6 +65,8 @@ let selectedVideo = null;
 let deleteJobId = null;
 /** @type {number|null} */
 let toastTimer = null;
+/** @type {Set<string>} */
+const expandedJobLogs = new Set();
 
 /** @param {string} selector @returns {Element} */
 function requiredElement(selector) {
@@ -123,10 +137,11 @@ async function uploadVideo() {
   elements.uploadProgress.classList.remove("hidden");
   try {
     const rendererMode = elements.rendererMode.value === "2d" ? "2d" : "blender";
-    await uploadVideoJob(selectedVideo, rendererMode, (percentage) => {
+    const job = await uploadVideoJob(selectedVideo, rendererMode, (percentage) => {
       elements.uploadPercentage.textContent = `${percentage}%`;
       elements.uploadBar.style.width = `${percentage}%`;
     });
+    expandedJobLogs.add(job.id);
     showToast("Video queued for reconstruction.");
     clearSelectedFile();
     await loadJobs();
@@ -160,7 +175,8 @@ function renderJobs(jobs) {
 
 /** @param {import("./api-client.js").ProcessingJob} job @returns {HTMLElement} */
 function createJobCard(job) {
-  const card = createElement("article", `job-card ${job.status === "failed" ? "failed" : ""}`);
+  const terminalClass = ["failed", "cancelled"].includes(job.status) ? job.status : "";
+  const card = createElement("article", `job-card ${terminalClass}`);
   card.append(createElement("span", "job-spinner"));
   const main = createElement("div", "job-main");
   const titleRow = createElement("div", "job-title-row");
@@ -177,16 +193,137 @@ function createJobCard(job) {
   const times = createElement("div", "job-times");
   times.append(createElement("span", "", `Progress ${Math.round(job.progress * 100)}%`));
   times.append(createElement("span", "", `Elapsed ${formatDuration(job.elapsed_seconds)}`));
-  if (job.status !== "failed") times.append(createElement("span", "", `ETA ${formatDuration(job.eta_seconds)}`));
-  main.append(times);
-  card.append(main);
-  if (job.status === "failed") {
-    const remove = createElement("button", "small-delete", "Remove");
-    remove.type = "button";
-    remove.addEventListener("click", () => openDeleteModal(job.id));
-    card.append(remove);
+  if (["queued", "processing"].includes(job.status)) {
+    times.append(createElement("span", "eta-value", etaLabel(job)));
   }
+  main.append(times);
+  main.append(createActivityPanel(job));
+  card.append(main);
+  const action = createJobAction(job);
+  if (action) card.append(action);
   return card;
+}
+
+/** @param {import("./api-client.js").ProcessingJob} job @returns {string} */
+function etaLabel(job) {
+  if (job.eta_status === "waiting") return "ETA waiting for worker";
+  if (job.eta_status === "recalibrating") return "ETA recalculating after current task";
+  if (job.eta_seconds == null) return "ETA estimating from live progress";
+  return `ETA ~${formatDuration(job.eta_seconds)}`;
+}
+
+/** @param {import("./api-client.js").ProcessingJob} job @returns {HTMLElement} */
+function createActivityPanel(job) {
+  const details = /** @type {HTMLDetailsElement} */ (createElement("details", "job-activity"));
+  details.open = expandedJobLogs.has(job.id);
+  const summary = createElement("summary");
+  summary.append(createElement("span", "", "Live reconstruction activity"));
+  summary.append(createElement("span", "activity-summary-note", "Current, completed and pending"));
+  details.append(summary, createPipelineSteps(job), createActivityFeed(job));
+  details.addEventListener("toggle", () => rememberActivityState(job.id, details.open));
+  return details;
+}
+
+/** @param {string} jobId @param {boolean} isOpen @returns {void} */
+function rememberActivityState(jobId, isOpen) {
+  if (isOpen) expandedJobLogs.add(jobId);
+  else expandedJobLogs.delete(jobId);
+}
+
+/** @param {import("./api-client.js").ProcessingJob} job @returns {HTMLElement} */
+function createPipelineSteps(job) {
+  const steps = createElement("div", "pipeline-steps");
+  for (const definition of PIPELINE_STEPS) {
+    const state = pipelineStepState(definition, job);
+    const row = createElement("div", `pipeline-step ${state}`);
+    row.append(createElement("span", "", definition.label));
+    row.append(createElement("span", "pipeline-step-state", pipelineStepLabel(definition, job, state)));
+    steps.append(row);
+  }
+  return steps;
+}
+
+/**
+ * @param {{stage: string, start: number, end: number}} definition
+ * @param {import("./api-client.js").ProcessingJob} job
+ * @returns {"completed"|"active"|"pending"}
+ */
+function pipelineStepState(definition, job) {
+  if (job.stage === definition.stage) return "active";
+  if (job.progress >= definition.end) return "completed";
+  if (job.progress > definition.start) return "active";
+  return "pending";
+}
+
+/**
+ * @param {{start: number, end: number}} definition
+ * @param {import("./api-client.js").ProcessingJob} job
+ * @param {"completed"|"active"|"pending"} state
+ * @returns {string}
+ */
+function pipelineStepLabel(definition, job, state) {
+  if (state === "completed") return "Done";
+  if (state === "pending") return "Pending";
+  const stageRange = definition.end - definition.start;
+  const localProgress = Math.min(1, Math.max(0, (job.progress - definition.start) / stageRange));
+  return `${Math.round(localProgress * 100)}%`;
+}
+
+/** @param {import("./api-client.js").ProcessingJob} job @returns {HTMLElement} */
+function createActivityFeed(job) {
+  const feed = createElement("ol", "activity-feed");
+  const recentActivity = job.activity_log.slice(-8).reverse();
+  for (const activity of recentActivity) {
+    const item = createElement("li", "activity-item");
+    item.append(createElement("time", "activity-time", activityTime(activity.timestamp)));
+    item.append(createElement("span", "", activity.detail));
+    item.append(createElement("span", "activity-progress", `${Math.round(activity.progress * 100)}%`));
+    feed.append(item);
+  }
+  if (!recentActivity.length) feed.append(createElement("li", "activity-item", "Waiting for the first pipeline update…"));
+  return feed;
+}
+
+/** @param {string} timestamp @returns {string} */
+function activityTime(timestamp) {
+  const parsed = new Date(timestamp);
+  return Number.isNaN(parsed.valueOf()) ? "Now" : parsed.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+}
+
+/** @param {import("./api-client.js").ProcessingJob} job @returns {HTMLButtonElement|null} */
+function createJobAction(job) {
+  if (["queued", "processing"].includes(job.status)) {
+    const cancel = /** @type {HTMLButtonElement} */ (createElement("button", "small-cancel", "Cancel job"));
+    cancel.type = "button";
+    cancel.addEventListener("click", () => cancelActiveJob(job.id, cancel));
+    return cancel;
+  }
+  if (job.status === "cancelling") {
+    const cancelling = /** @type {HTMLButtonElement} */ (createElement("button", "small-cancel", "Cancelling…"));
+    cancelling.type = "button";
+    cancelling.disabled = true;
+    return cancelling;
+  }
+  if (!["failed", "cancelled"].includes(job.status)) return null;
+  const remove = /** @type {HTMLButtonElement} */ (createElement("button", "small-delete", "Remove"));
+  remove.type = "button";
+  remove.addEventListener("click", () => openDeleteModal(job.id));
+  return remove;
+}
+
+/** @param {string} jobId @param {HTMLButtonElement} button @returns {Promise<void>} */
+async function cancelActiveJob(jobId, button) {
+  button.disabled = true;
+  button.textContent = "Cancelling…";
+  try {
+    await cancelProcessingJob(jobId);
+    showToast("Cancellation requested. Active render processes are stopping.");
+    await loadJobs();
+  } catch (error) {
+    showToast(errorMessage(error), true);
+    button.disabled = false;
+    button.textContent = "Cancel job";
+  }
 }
 
 /** @param {import("./api-client.js").ProcessingJob} job @returns {HTMLElement} */

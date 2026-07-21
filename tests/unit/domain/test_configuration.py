@@ -41,6 +41,13 @@ class ConfigurationValidationTests(unittest.TestCase):
         with self.assertRaisesRegex(ConfigurationValidationError, "renderer.default_mode"):
             validate_configuration(invalid_configuration)
 
+    def test_rejects_excessive_parallel_gap_renderers(self) -> None:
+        invalid_configuration = copy.deepcopy(self.configuration)
+        invalid_configuration["renderer"]["max_parallel_gap_renders"] = 5
+
+        with self.assertRaisesRegex(ConfigurationValidationError, "max_parallel_gap_renders"):
+            validate_configuration(invalid_configuration)
+
 
 if __name__ == "__main__":
     unittest.main()

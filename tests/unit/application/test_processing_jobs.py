@@ -5,7 +5,9 @@ import sys
 import tempfile
 import time
 import unittest
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from unittest.mock import patch
 
 import cv2
 import numpy as np
@@ -14,8 +16,10 @@ import numpy as np
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
-from application.processing_jobs import JobManager
+from application.processing_jobs import JobManager, _replace_metadata_file
 from application.reconstruction_pipeline import PipelineOptions, ProgressCallback
+from domain.cancellation import raise_if_cancelled
+from domain.processing_job import JobStatus, ProcessingJob
 
 
 JOB_COMPLETION_TIMEOUT_SECONDS = 5.0
@@ -44,6 +48,21 @@ def copy_video_processor(
     return output_path
 
 
+def cancellable_video_processor(
+    video_path: Path,
+    options: PipelineOptions,
+    random_generator: random.Random,
+    progress_callback: ProgressCallback | None,
+) -> Path:
+    del random_generator
+    if progress_callback is not None:
+        progress_callback("rendering", 0.5, "Waiting for cancellation")
+    for _ in range(200):
+        raise_if_cancelled(options.cancellation_check)
+        time.sleep(0.01)
+    return options.output_dir / f"{video_path.stem}_reconstructed.mp4"
+
+
 class ProcessingJobManagerTests(unittest.TestCase):
     def test_job_completes_persists_and_deletes_owned_files(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
@@ -61,9 +80,15 @@ class ProcessingJobManagerTests(unittest.TestCase):
                 self.assertEqual("completed", completed_job["status"])
                 self.assertEqual("blender", completed_job["renderer_mode"])
                 self.assertEqual(1.0, completed_job["progress"])
+                self.assertEqual("finished", completed_job["eta_status"])
+                activity_stages = [item["stage"] for item in completed_job["activity_log"]]
+                self.assertIn("queued", activity_stages)
+                self.assertIn("rendering", activity_stages)
+                self.assertEqual("completed", activity_stages[-1])
                 output_path = manager.output_path(created_job["id"])
                 self.assertTrue(output_path.is_file())
                 self.assertTrue((output_path.parent / "job.json").is_file())
+                self.assertEqual([], list(output_path.parent.glob("*.tmp")))
 
                 upload_directory = temporary_root / "uploads" / created_job["id"]
                 output_directory = temporary_root / "outputs" / created_job["id"]
@@ -94,11 +119,71 @@ class ProcessingJobManagerTests(unittest.TestCase):
             finally:
                 manager.shutdown()
 
+    def test_active_job_can_be_cancelled_then_deleted(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            temporary_root = Path(temporary_directory)
+            video_bytes = create_test_video(temporary_root / "fixture.mp4")
+            manager = JobManager(
+                temporary_root / "uploads",
+                temporary_root / "outputs",
+                config_data={},
+                processor=cancellable_video_processor,
+            )
+            try:
+                created_job = manager.create_job("cancel.mp4", io.BytesIO(video_bytes), len(video_bytes))
+                self._wait_for_status(manager, created_job["id"], {"processing"})
+
+                cancelling_job = manager.cancel_job(created_job["id"])
+                cancelled_job = self._wait_for_status(manager, created_job["id"], {"cancelled"})
+
+                self.assertIn(cancelling_job["status"], {"cancelling", "cancelled"})
+                self.assertEqual("cancelled", cancelled_job["stage"])
+                self.assertIsNone(cancelled_job["error"])
+                self.assertEqual("cancelled", cancelled_job["activity_log"][-1]["stage"])
+                manager.delete_job(created_job["id"])
+                self.assertEqual([], manager.list_jobs())
+            finally:
+                manager.shutdown()
+
+    def test_metadata_replace_retries_a_transient_windows_lock(self) -> None:
+        temporary_path = Path("job.unique.tmp")
+        metadata_path = Path("job.json")
+        replace_results = [PermissionError("locked"), None]
+
+        with patch.object(Path, "replace", side_effect=replace_results) as replace_mock:
+            with patch("application.processing_jobs.time.sleep") as sleep_mock:
+                _replace_metadata_file(temporary_path, metadata_path)
+
+        self.assertEqual(2, replace_mock.call_count)
+        sleep_mock.assert_called_once_with(0.05)
+
+    def test_live_eta_counts_down_then_reports_recalibration(self) -> None:
+        record = ProcessingJob(
+            job_id="a" * 32,
+            source_name="fixture.mp4",
+            input_path=Path("fixture.mp4"),
+            output_dir=Path("output"),
+            status=JobStatus.PROCESSING,
+            eta_seconds=120,
+            progress_updated_at=(datetime.now(timezone.utc) - timedelta(seconds=10)).isoformat(),
+        )
+
+        eta_seconds, eta_status = JobManager._live_eta(record)
+        self.assertEqual("counting_down", eta_status)
+        self.assertGreaterEqual(eta_seconds or 0, 109)
+        self.assertLessEqual(eta_seconds or 0, 110)
+
+        record.progress_updated_at = (datetime.now(timezone.utc) - timedelta(seconds=180)).isoformat()
+        self.assertEqual((None, "recalibrating"), JobManager._live_eta(record))
+
     def _wait_for_completion(self, manager: JobManager, job_id: str) -> dict:
+        return self._wait_for_status(manager, job_id, {"completed", "failed"})
+
+    def _wait_for_status(self, manager: JobManager, job_id: str, statuses: set[str]) -> dict:
         deadline = time.monotonic() + JOB_COMPLETION_TIMEOUT_SECONDS
         while time.monotonic() < deadline:
             job = manager.get_job(job_id)
-            if job["status"] in {"completed", "failed"}:
+            if job["status"] in statuses:
                 return job
             time.sleep(0.02)
         self.fail("Processing job did not complete before the test timeout")

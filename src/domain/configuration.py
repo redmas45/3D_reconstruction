@@ -2,7 +2,9 @@ import json
 from pathlib import Path
 
 
-REQUIRED_CONFIGURATION_SECTIONS = ("yolo", "gap", "scene", "visualization", "evaluation", "renderer")
+REQUIRED_CONFIGURATION_SECTIONS = (
+    "yolo", "gap", "scene", "reasoning", "visualization", "evaluation", "renderer",
+)
 MINIMUM_GAP_SECONDS = 0.1
 MAXIMUM_MISSING_FRACTION = 0.95
 MAXIMUM_PARALLEL_GAP_RENDERERS = 4
@@ -11,6 +13,11 @@ MAXIMUM_RENDER_STALL_TIMEOUT_SECONDS = 86_400
 SUPPORTED_BLENDER_ENGINES = frozenset({"BLENDER_EEVEE_NEXT", "BLENDER_WORKBENCH", "CYCLES"})
 SUPPORTED_CYCLES_COMPUTE_DEVICES = frozenset({"CUDA", "OPTIX"})
 MAXIMUM_CYCLES_SAMPLES = 4_096
+MINIMUM_REASONING_TIMEOUT_SECONDS = 10
+MAXIMUM_REASONING_TIMEOUT_SECONDS = 600
+MINIMUM_REASONING_OUTPUT_TOKENS = 512
+MAXIMUM_REASONING_OUTPUT_TOKENS = 32_000
+SUPPORTED_REASONING_EFFORTS = frozenset({"none", "low", "medium", "high", "xhigh"})
 
 
 class ConfigurationValidationError(ValueError):
@@ -35,6 +42,7 @@ def validate_configuration(configuration: dict) -> None:
             raise ConfigurationValidationError(f"Configuration section '{section_name}' must be an object")
     _validate_gap_configuration(configuration["gap"])
     _validate_yolo_configuration(configuration["yolo"])
+    _validate_reasoning_configuration(configuration["reasoning"])
     _validate_renderer_configuration(configuration["renderer"])
 
 
@@ -76,6 +84,19 @@ def _validate_renderer_configuration(renderer_configuration: dict) -> None:
             "renderer.gap_render_stall_timeout_seconds must be between 60 and 86400"
         )
     _validate_optional_cycles_configuration(renderer_configuration)
+
+
+def _validate_reasoning_configuration(reasoning_configuration: dict) -> None:
+    if not isinstance(reasoning_configuration.get("enabled"), bool):
+        raise ConfigurationValidationError("reasoning.enabled must be boolean")
+    timeout_seconds = _required_integer(reasoning_configuration, "request_timeout_seconds")
+    if not MINIMUM_REASONING_TIMEOUT_SECONDS <= timeout_seconds <= MAXIMUM_REASONING_TIMEOUT_SECONDS:
+        raise ConfigurationValidationError("reasoning.request_timeout_seconds must be between 10 and 600")
+    output_tokens = _required_integer(reasoning_configuration, "max_output_tokens")
+    if not MINIMUM_REASONING_OUTPUT_TOKENS <= output_tokens <= MAXIMUM_REASONING_OUTPUT_TOKENS:
+        raise ConfigurationValidationError("reasoning.max_output_tokens must be between 512 and 32000")
+    if reasoning_configuration.get("reasoning_effort") not in SUPPORTED_REASONING_EFFORTS:
+        raise ConfigurationValidationError("reasoning.reasoning_effort is unsupported")
 
 
 def _validate_optional_cycles_configuration(renderer_configuration: dict) -> None:

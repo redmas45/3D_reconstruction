@@ -19,6 +19,8 @@ from infrastructure.application_lock import (
     ApplicationAlreadyRunningError,
     ApplicationInstanceLock,
 )
+from infrastructure.environment import load_environment_file
+from infrastructure.environment import load_environment_file
 
 
 DEFAULT_HOST = "127.0.0.1"
@@ -48,6 +50,8 @@ def _arguments() -> argparse.Namespace:
 
 def main() -> None:
     args = _arguments()
+    load_environment_file(ROOT / ".env")
+    load_environment_file(ROOT / ".env")
     output_root = ROOT / "outputs"
     output_root.mkdir(parents=True, exist_ok=True)
     instance_lock = ApplicationInstanceLock(output_root / "server.lock")

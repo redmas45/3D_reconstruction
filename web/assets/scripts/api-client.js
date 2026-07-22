@@ -13,6 +13,27 @@ const UPLOAD_TIMEOUT_MILLISECONDS = 300_000;
  */
 
 /**
+ * @typedef {Object} ReasoningDecision
+ * @property {number} gap_index
+ * @property {string} selected_hypothesis_id
+ * @property {string[]} evidence_references
+ * @property {string} decision_summary
+ * @property {{id: string, reason: string}[]} rejected_hypotheses
+ * @property {number} confidence
+ * @property {string[]} unknowns
+ */
+
+/**
+ * @typedef {Object} ReasoningSummary
+ * @property {string} status
+ * @property {string} mode
+ * @property {string|null} deployment
+ * @property {string|null} warning
+ * @property {string[]} scene_clues
+ * @property {ReasoningDecision[]} decisions
+ */
+
+/**
  * @typedef {Object} ProcessingJob
  * @property {string} id
  * @property {string} source_name
@@ -32,6 +53,7 @@ const UPLOAD_TIMEOUT_MILLISECONDS = 300_000;
  * @property {number|null} size_bytes
  * @property {boolean} is_legacy_output
  * @property {"blender"|"2d"} renderer_mode
+ * @property {ReasoningSummary|null} reasoning
  */
 
 /** @returns {Promise<ProcessingJob[]>} */

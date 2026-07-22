@@ -4,7 +4,7 @@
 
 This is the approved, living implementation plan for the AI evidence-gap reconstruction project. It records the target architecture, acceptance gates, completed work, measured results, and remaining validation work.
 
-### Implementation status — audited 21 July 2026
+### Implementation status — audited 22 July 2026
 
 - Phase 0 is implemented: the OpenCV 2.5D renderer remains an explicit fallback and Blender 4.5 LTS runs headlessly through a JSON-only boundary.
 - Phase 1 is substantially implemented and unit tested: visible-only evidence enforcement, delayed hidden-truth materialization, identity registry, motion measurement, robust height priors, forward-predicted three-point paths, soft post-gap residuals, crossing-appearance rejection, and confidence-driven presentation filtering.
@@ -15,6 +15,8 @@ This is the approved, living implementation plan for the AI evidence-gap reconst
 - Resume state is content-addressed by source SHA-256. Selection and detection JSON use atomic replacement and malformed-cache recovery; Blender reuse verifies the plan/report contract and the physical MP4 contract before accepting a completed gap.
 - The local service is single-instance and loopback-only, validates request hosts, bounds request/upload stalls, persists clean public errors, supports cancellation, and closes active browser connections during shutdown.
 - The supported profile is currently constant-frame-rate, static-camera footage with people or road vehicles visible near gap boundaries. Moving-camera footage is experimental because motion is measured but not applied to the Blender camera; arbitrary indoor/general-scene reconstruction is not claimed as flawless.
+- Azure OpenAI evidence reasoning is implemented for Blender jobs: a visible-only ledger, three bounded motion hypotheses, Azure Responses adapter, strict trace validator, content-addressed cache, explicit deterministic fallback, plan-v2 application, public artifacts, progress stages, and UI decision trace are present. The configured deployment is read from `AZURE_OPENAI_CHAT_DEPLOYMENT`; a live paid end-to-end request and visual comparison remain validation gates.
+- The Colab T4 successfully completed a real Blender Cycles OptiX probe in 4.544 seconds, proving GPU access. A subsequent production run reached the Colab T4 session limit after roughly 3–4 hours, proving that the current source-FPS, 75%-scale, 16-sample profile is not a viable full-video default.
 - Phase 4 (three representative gaps), Phase 5 (full one-video render), Phase 6 judge polish, and Phase 7 second-video validation remain approval gates.
 
 Historical render artifacts (useful for timing/container inspection, but generated before the current evidence/calibration hardening and therefore not current visual-acceptance proof):
@@ -22,7 +24,7 @@ Historical render artifacts (useful for timing/container inspection, but generat
 - `outputs/blender_preview_input_vid3/gap_00/`: original-video gap-0 midpoint, animation, plan, `.blend`, report, log, and contact sheet.
 - `outputs/e2e_blender_smoke/`: 150-frame UI-pipeline smoke result with one 38-frame Blender gap, H.264 video, AAC audio, and exact 1280×720 / 29.970029 fps contract.
 - Eevee production timing on this CPU: final 57-frame gap with transitions in 560.489 seconds; 38-frame smoke gap in 261.256 seconds.
-- Automated verification: 104 tests pass. Coverage includes source admission, content-addressed and corrupt-cache recovery, evidence isolation, sibling cancellation, metadata rollback, audio duration, local API races, and UI-controller behavior.
+- Automated verification: 110 tests pass. Coverage includes source admission, content-addressed and corrupt-cache recovery, evidence isolation, sibling cancellation, metadata rollback, audio duration, local API races, UI-controller behavior, and Cycles GPU configuration.
 - A real headless Blender contract probe preserved a 720×1280 portrait resolution at 29.97 fps. A new full render has not been run during this audit.
 
 ## 2. Current State
@@ -33,6 +35,7 @@ The project now:
 - distributes approximately 25% of the video across random 1–3 second gaps
 - keeps the remaining 75% as YOLO-annotated evidence
 - tracks visible people, vehicles, and carried objects
+- does not yet write the approved evidence ledger or call Azure OpenAI
 - writes strict plan-v2, identity-registry, camera-motion, selection, and render-report contracts
 - renders inferred gaps with headless Blender forensic 3D by default
 - retains OpenCV 2.5D only as an operator-selected fallback
@@ -58,6 +61,7 @@ The target output is a professional forensic visualization:
 8. Uncertainty is visible and the output never claims to be recovered ground truth.
 9. The output retains the source duration, frame rate, resolution, and audio when available.
 10. The entire workflow remains reproducible from the local UI started with `python app.py`.
+11. Before rendering, the UI exposes the visible clues and an evidence-linked decision trace containing selected and rejected hypotheses, confidence, and unknowns.
 
 The intended label is:
 
@@ -123,6 +127,7 @@ Allowed inputs for a hidden gap:
 - appearance samples from visible frames
 - inferred camera and ground-plane parameters
 - optional witness statement stored separately from video evidence
+- an Azure OpenAI decision produced exclusively from the allowed visible evidence above
 
 Forbidden inputs until evaluation:
 
@@ -132,10 +137,13 @@ Forbidden inputs until evaluation:
 - appearance crops taken from hidden frames
 - metrics from hidden truth used to change the current reconstruction
 - the post-gap position used as a hard target to back-solve speed, force arrival, or reshape the predicted path
+- model-generated track IDs, observations, coordinates, or events that cannot be traced to the validated evidence ledger or a deterministic candidate hypothesis
 
 The post-gap observation is allowed only as a soft consistency check. The primary path must be predicted from pre-gap velocity, heading, acceleration limits, and scene constraints. Evaluation records how far that prediction is from the post-gap observation. The planner must not silently bend the path until that residual becomes zero.
 
 Hidden truth may be read only after every gap has been rendered.
+
+Azure OpenAI must be called before hidden-truth materialization. Its request artifact must contain an evidence-ledger digest and explicit visible-frame references. The response validator must reject unknown entity IDs, out-of-range timestamps, unsupported actions, unconstrained coordinates, missing evidence references, and confidence outside `0–1`. Azure output never bypasses the existing plan-v2 validator.
 
 ## 7. Target Architecture
 
@@ -149,6 +157,21 @@ Input video
     +-- cross-gap identity matching
     |
     +-- scene intelligence report
+    |
+    +-- structured evidence ledger
+    |       |
+    |       +-- visible track/boundary facts
+    |       +-- selected visible keyframes
+    |       +-- deterministic candidate hypotheses
+    |       +-- contradictions and unknowns
+    |       |
+    |       +-- optional Azure OpenAI reasoner
+    |               |
+    |               +-- strict structured decision trace
+    |               +-- selected/rejected hypotheses
+    |               +-- evidence references and confidence
+    |
+    +-- deterministic decision validator
     |
     +-- per-gap reconstruction plan v2
             |
@@ -175,7 +198,59 @@ Input video
 
 Business logic remains in normal Python modules. Blender scripts should build and render scenes, not decide who exists or what happened.
 
+Azure OpenAI is also not the renderer. It may summarize clues and rank bounded hypotheses, while deterministic Python remains authoritative for identities, coordinate conversion, physical limits, evidence isolation, schema validation, and final plan construction.
+
 Blender's bundled Python must not import the system `src/` business-logic modules or depend on system site packages. System Python validates evidence and writes plain JSON contracts for plan v2, the global identity registry, calibration, and proxy geometry. Blender reads those contracts with its standard library and owns only `bpy` scene construction and rendering. A smoke test must verify this process and import boundary.
+
+### 7.1 Azure OpenAI evidence-reasoning layer
+
+**Status: first bounded implementation complete; live Azure and visual gates pending.** Deterministic geometry remains authoritative and is also the explicitly labeled fallback.
+
+The system will create one `evidence_ledger.json` per video before any Azure request. It will contain:
+
+- global scene and camera observations derived from visible frames
+- stable entity IDs, classes, lifecycle, and confidence
+- per-gap pre/post boundary facts with source frame references
+- measured velocity, heading, lifecycle, calibration, and continuity confidence
+- deterministic candidate paths/actions with stable hypothesis IDs
+- heading disagreement, post-gap residuals, and camera-calibration confidence
+- a future, separately validated visible-keyframe extension; the current implementation sends structured evidence only
+
+The Azure reasoner receives the ledger, not raw hidden footage. It returns one strict `decision_trace.json` with this conceptual shape:
+
+```json
+{
+  "schema_version": 1,
+  "evidence_digest": "sha256:...",
+  "decisions": [
+    {
+      "gap_index": 0,
+      "selected_hypothesis_id": "measured_continuation",
+      "evidence_references": ["track:person_6:pre_boundary"],
+      "decision_summary": "Continues forward at approximately the measured pre-gap pace.",
+      "rejected_hypotheses": [
+        {"id": "stationary_hold", "reason": "Conflicts with visible heading evidence."}
+      ],
+      "confidence": 0.71,
+      "unknowns": ["Exact arm motion is not observable."]
+    }
+  ],
+  "metadata": {"provider": "azure_openai", "deployment": "gpt-5.4"}
+}
+```
+
+This trace is the public reasoning artifact shown in the UI. Raw private chain-of-thought must not be requested, persisted, logged, or presented. When the deployed reasoning model supports a reasoning summary, that supported summary may supplement—but never replace—the evidence references and schema fields.
+
+The model's authority is deliberately narrow:
+
+- it may summarize visible clues, rank supplied candidate hypotheses, identify contradictions, lower confidence, or abstain
+- it may not invent entity IDs, read hidden frames, create arbitrary world coordinates, override physical limits, or silently force a path to meet post-gap evidence
+- deterministic Python validates the evidence digest, references, IDs, value ranges, candidate membership, and plan-v2 contract
+- an invalid response activates a clearly labeled deterministic fallback; a bounded repair request may be added later only if it remains measurable and safe
+
+Use the Azure OpenAI Responses API with `store=False`. The implemented adapter uses Python's standard HTTPS library, avoiding another runtime dependency, and reads `AZURE_OPENAI_API_KEY`, `AZURE_OPENAI_BASE_URL`, and `AZURE_OPENAI_CHAT_DEPLOYMENT`. Azure API calls target the deployment name; the current local deployment value is `gpt-5.4`. Structured output is requested through a strict JSON schema and validated again locally.
+
+Cache the response by evidence digest, deployment, prompt version, schema version, and inference configuration. A resume must never pay for or execute the same accepted reasoning request twice. API errors, rate limits, refusals, timeouts, token usage, and cache status belong in a sanitized reasoning report; secrets, full request authorization headers, and private image URLs do not.
 
 ## 8. Reconstruction Plan Version 2
 
@@ -630,9 +705,22 @@ Recommended intermediate format:
 
 PNG sequences are restartable and avoid losing an entire render if a process stops. After rendering, frames will be encoded into a gap video. **Current state:** preview mode writes one PNG, while animation mode currently writes H.264 MP4 directly and resumes only at complete-gap granularity. Per-frame PNG resume remains a target improvement, not an implemented claim.
 
+The direct-to-MP4 implementation is now a confirmed Colab risk: a T4 production run consumed roughly 3–4 hours and reached the session limit. The tiny 320×180 OptiX probe completed in 4.544 seconds but measured device availability, not representative scene throughput.
+
+The revised production contract separates source FPS from reconstruction render FPS:
+
+- preserve source FPS, duration, audio, and final frame count as immutable output requirements
+- render Blender gaps at configurable `reconstruction_fps` in the 8–12 fps default range
+- render at 50% internal resolution and 4–8 Cycles samples with denoising for the first Colab production profile
+- deterministically resample the rendered gap to the exact source-frame count and upscale before stitching
+- record render FPS, resampling method, scale, samples, measured seconds per rendered frame, and final contract in `render_report.json`
+- use local PNG frame sequences and a validated frame manifest so resume can continue inside a gap instead of restarting it
+
+Temporal resampling must never change entity paths, gap duration, or evidence timestamps. It is a rendering optimization, not an inference operation.
+
 ### Render engine
 
-Start with Blender Eevee for speed. If this machine cannot render Eevee reliably, use Blender Workbench for the first forensic version. Cycles is not appropriate for the initial full-video workflow on this hardware.
+Local rendering starts with Blender Eevee when the graphics driver supports it, with Workbench as the compatibility fallback. Colab may use Cycles OptiX/CUDA only after a real device probe. The current 75%-scale, 16-sample, source-FPS Cycles configuration is rejected as the full-video default after exceeding the observed Colab runtime limit. One representative gap must establish a measured estimate before the full render; a projected run beyond the configured budget requires an explicit operator override.
 
 ### Cache policy
 
@@ -642,10 +730,12 @@ Each gap receives a cache signature based on:
 - Blender script version
 - Blender configuration
 - resolution and frame rate
+- reconstruction render FPS, resampling policy, Cycles samples, and internal resolution scale
+- evidence-ledger digest and accepted decision-trace digest
 
 Unchanged gaps should not be rerendered.
 
-**Current audited cache contract:** reuse verifies the exact plan SHA-256, animation mode, engine, frame count, production resolution, frame rate, and non-empty artifacts. Automatic Blender-script version hashing remains pending; code changes that do not alter the plan should therefore use a fresh run identifier or explicitly bump the renderer contract.
+**Current audited cache contract:** reuse verifies the exact plan SHA-256, animation mode, engine, frame count, production resolution, frame rate, and non-empty artifacts. Automatic Blender-script version hashing, evidence/decision digests, and per-frame resume remain pending; code changes that do not alter the plan should therefore use a fresh run identifier or explicitly bump the renderer contract.
 
 ## 17. Encoding and Audio
 
@@ -676,13 +766,18 @@ src/
   application/
     reconstruction_pipeline.py
     processing_jobs.py
+    evidence_reasoning.py
   domain/
     configuration.py
+    evidence_reasoning.py
     processing_job.py
     video_upload.py
   interfaces/
     http/
       local_server.py
+  infrastructure/
+    azure_openai_reasoner.py
+    environment.py
   blender_export.py
   blender_runner.py
   camera_calibration.py
@@ -748,7 +843,7 @@ The browser UI is the supported operator surface. The reconstruction orchestrato
 
 ## 20. Implementation Phases and Approval Gates
 
-### Phase 0 — Freeze and benchmark the baseline (implemented)
+### Phase 0 — Freeze and benchmark the baseline (local baseline implemented; Colab production benchmark reopened)
 
 Work:
 
@@ -758,6 +853,7 @@ Work:
 - add renderer selection to configuration, without changing default behavior
 - verify that Blender background mode can consume a system-Python-generated JSON fixture without importing `src/`
 - benchmark one representative frame and one short sequence in Eevee and Workbench; record seconds per frame, memory use, and visible quality defects before choosing the default engine
+- treat the 4.544-second 320×180 T4 OptiX render as a device probe only and replace it with representative-gap timing before another full Colab run
 
 Gate:
 
@@ -787,6 +883,27 @@ Gate:
 - the same track resolves to the same identity-registry record in every gap
 - calibration confidence, component residuals, heading disagreement, and post-gap residuals are present and testable
 - an appearance-signature conflict prevents a crossing-track merge even when the spatial match is plausible
+
+### Phase 1A — Evidence ledger and Azure reasoning (implemented; live/visual validation pending)
+
+Work:
+
+- convert deterministic visible-only outputs into one strict evidence ledger
+- generate bounded candidate hypotheses before the model call
+- add the Azure Responses API adapter and require the configured deployment name
+- request strict structured decisions, never raw chain-of-thought
+- validate every evidence reference, entity ID, hypothesis ID, confidence, and unknown before plan-v2 construction
+- cache accepted decisions and sanitize all error/usage reporting
+- display extracted clues and the structured decision trace in the local UI
+
+Gate:
+
+- an Azure request contains no hidden frame, hidden detection, hidden metric, or secret in logs
+- malformed, invented, out-of-range, or unreferenced model output is rejected
+- the same evidence/configuration reuses the cached decision without another paid request
+- API timeout, refusal, rate limit, and invalid schema produce a clean, visible state
+- deterministic fallback is labeled explicitly and never masquerades as Azure-assisted reasoning
+- judges can inspect the selected hypothesis, evidence references, rejected alternatives, confidence, and unknowns before rendering
 
 ### Phase 2 — Single-frame Blender scene (partial; visual gate must be repeated)
 
@@ -848,7 +965,10 @@ Gate:
 
 Work:
 
+- run the representative-gap benchmark and calculate the projected full-render duration
+- require approval or an explicit runtime-budget override before scheduling all gaps
 - render all gaps for `input_vid3.mp4`
+- use sparse reconstruction FPS, reduced internal scale/samples, and resumable PNG frames under the Colab profile
 - encode and stitch the full timeline
 - preserve audio
 - run evaluation
@@ -910,6 +1030,9 @@ Only after `input_vid3.mp4` is approved:
 - conflicting appearance signatures are never merged during crossing-track matching
 - the same global track identity retains its proportions, appearance, materials, carried items, and animation phase across all gaps
 - calibration confidence remains separate from entity confidence and can downgrade visual fidelity for the whole gap
+- every Azure-selected hypothesis references only validated ledger evidence and a deterministic candidate ID
+- rejected alternatives, confidence, and unknowns remain visible in the structured decision trace
+- raw model chain-of-thought is never requested, logged, persisted, or presented
 
 ### Technical
 
@@ -921,6 +1044,9 @@ Only after `input_vid3.mp4` is approved:
 - resumable per-gap renders
 - Blender failure returns a clean error and preserves logs
 - no new unapproved external asset dependencies
+- Azure reasoning is content-addressed and does not repeat an accepted paid request on resume
+- sparse gap renders resample to the exact source-frame count without changing gap duration
+- representative-gap timing produces a full-run estimate before all gaps are scheduled
 
 ### Evaluation
 
@@ -1002,15 +1128,42 @@ Mitigation:
 
 ### Rendering is slow
 
-Risk: CPU-only full rendering takes too long.
+Risk: even GPU Cycles can exceed the Colab T4 session limit when approximately 25% of a two-minute source is rendered at source FPS, 75% resolution, and 16 samples. The successful 4.544-second 320×180 probe does not predict full-scene throughput.
 
 Mitigation:
 
-- Eevee or Workbench
-- render one preview gap first
-- PNG caching
+- benchmark one representative production gap and project total time before the full run
+- use 8–12 reconstruction fps, 50% internal scale, 4–8 Cycles samples, and denoising for the first Colab production profile
+- resample and upscale deterministically to the exact source contract after rendering
+- use resumable PNG frames and validated frame manifests rather than direct-to-MP4 gap rendering
+- retain Eevee or Workbench where their graphics paths are actually faster and supported
 - reuse unchanged environment assets
-- configurable preview resolution and samples
+- refuse an over-budget full render unless the operator explicitly overrides the estimate
+
+### Model-generated unsupported claims
+
+Risk: an Azure model produces a plausible narrative that is not supported by the visible 75%.
+
+Mitigation:
+
+- send a compact evidence ledger plus bounded candidate hypotheses instead of an open-ended request to imagine the gap
+- require stable evidence references and candidate IDs in strict structured output
+- reject unknown entities, arbitrary coordinates, unsupported actions, and missing references
+- keep deterministic geometry and physical constraints authoritative
+- expose selected and rejected hypotheses, confidence, and unknowns to the operator before rendering
+- abstain or use a visibly labeled deterministic fallback when the model cannot support a decision
+
+### Azure availability, privacy, and cost
+
+Risk: the configured deployment is missing, unavailable, rate-limited, expensive, or unsuitable for sending visible video evidence.
+
+Mitigation:
+
+- require `AZURE_OPENAI_CHAT_DEPLOYMENT` with `AZURE_OPENAI_BASE_URL` and the API key before Azure-assisted processing
+- minimize and resize visible keyframes; never send hidden frames or unnecessary full video
+- disclose external Azure processing in the UI
+- use `store=False`, sanitized logs, bounded timeouts/retries, token limits, and content-addressed caching
+- never expose the API key or authorization headers
 
 ### Blender scripting compatibility
 
@@ -1054,6 +1207,11 @@ Mitigation:
 - Blender command construction
 - cache signature behavior
 - FFmpeg command construction
+- evidence-ledger schema, stable digest, and hidden-frame rejection
+- Azure structured-decision parsing, refusal, timeout, rate-limit, malformed-output, and one-repair behavior
+- invented entity/evidence/hypothesis rejection and confidence-range validation
+- Azure decision-cache reuse without a second API call
+- reconstruction-FPS resampling to exact source frame counts
 
 ### Blender smoke tests
 
@@ -1143,6 +1301,10 @@ The Blender phase is complete only when:
 14. Detailed rigs and actions appear only when entity and calibration confidence support that fidelity tier.
 15. Every repeated global track keeps the same cached appearance, proportions, materials, carried items, and animation style across gaps.
 16. Predicted paths retain honest post-gap residuals and are never forced to meet future observations.
+17. The UI shows the evidence ledger and structured decision trace before Blender rendering begins.
+18. Azure-assisted output is reproducible from cached decisions, and Azure failures or deterministic fallback are labeled explicitly.
+19. A representative-gap benchmark predicts a run within the configured budget before the full video is scheduled.
+20. Interrupted Colab rendering can resume from validated completed frames, not only completed gaps.
 
 ## 26. Approved Implementation Decisions
 
@@ -1158,6 +1320,11 @@ The following decisions are approved for implementation and remain change-contro
 8. **Claims:** call the output an AI-inferred forensic reconstruction, not recovered footage.
 9. **Prediction:** use pre-gap motion as the primary path estimate and post-gap observations only as soft consistency checks.
 10. **Identity:** generate and cache appearance and body parameters once per global track ID, then reuse them across every gap.
+11. **AI authority:** Azure OpenAI may summarize evidence and rank bounded hypotheses; deterministic Python remains authoritative for evidence isolation, IDs, coordinates, physics, validation, and plan construction.
+12. **Reasoning visibility:** expose a structured decision trace with evidence references, selected/rejected hypotheses, confidence, and unknowns; never request or expose raw private chain-of-thought.
+13. **Azure configuration:** read key, base URL, and deployment from environment variables; never hardcode or persist secrets.
+14. **AI failure:** reject an invalid response and activate the explicitly labeled deterministic fallback; consider one bounded repair attempt only after live telemetry justifies it.
+15. **Colab performance:** require a representative-gap estimate, sparse rendering, and per-frame resume before another full two-minute Cycles run.
 
 ## 27. Local Processing UI
 
@@ -1176,7 +1343,11 @@ Provide one clean local interface that a judge or operator can use without termi
 
 ### Processing experience
 
-- show queued, validating, selecting gaps, detecting/tracking, planning, rendering, evaluating, stitching, cancelling, cancelled, completed, and failed stages
+- show queued, validating, selecting gaps, detecting/tracking, extracting clues, reasoning, validating decisions, previewing, rendering, evaluating, stitching, cancelling, cancelled, completed, and failed stages
+- expose an evidence-clues view after deterministic extraction, grouped into scene, entity, per-gap boundary, conflict, and unknown sections
+- expose the structured decision trace with selected hypothesis, evidence references, rejected alternatives, confidence, and unknowns before Blender rendering begins
+- show whether the job is Azure-assisted, deterministic, or using an explicitly acknowledged fallback
+- disclose that selected visible evidence may be sent to the configured Azure resource when Azure-assisted mode is enabled
 - expose real stage progress from the Python pipeline rather than a purely decorative percentage
 - show elapsed time and a clearly labeled best-effort ETA derived from observed progress; count it down between pipeline updates and switch to `recalculating` when an in-flight task exceeds the latest estimate
 - provide an expandable live-activity panel per job with completed, active, and pending stages, per-stage percentage, timestamps, and recent persisted pipeline messages
@@ -1187,6 +1358,7 @@ Provide one clean local interface that a judge or operator can use without termi
 - surface clean errors in the UI while retaining detailed local logs
 - expose a cancel action for queued and processing jobs; show `cancelling` until active Blender/FFmpeg processes have stopped
 - keep one top-level video job active at a time while rendering up to three independent Blender gaps concurrently through bounded worker threads and separate Blender subprocesses
+- show representative-gap seconds per frame, projected full-render duration, active runtime budget, and the operator's approval/override state
 
 ### Page layout
 
@@ -1223,6 +1395,9 @@ Video responses must support bounded HTTP range requests so browser seeking work
 - progress, current stage, elapsed time, and ETA update while processing
 - the ETA continues changing between stage updates and clearly reports when it is recalculating
 - the live-activity dropdown identifies completed, active, and pending work and preserves its open state across polling refreshes
+- extracted clues and the structured decision trace can be inspected before the render is committed
+- invalid Azure output and deterministic fallback are clearly visible rather than hidden behind generic progress text
+- an over-budget projected render pauses for explicit approval instead of consuming the full runtime automatically
 - cancellation stops active reconstruction processes and reaches a terminal cancelled state without deleting unrelated outputs
 - a completed output appears automatically and plays in the browser
 - download returns the physical output file
@@ -1243,11 +1418,15 @@ The notebook must:
 - process from `/content` instead of directly against mounted Drive
 - accept one validated common-format video and derive a run identifier from video content, seed, effective configuration, Git commit, and Blender version
 - show live stage, detail, and aggregate progress emitted by the shared pipeline
+- import Azure credentials into the Colab runtime only through a secret/environment mechanism; never write them into the notebook or Drive artifacts
+- run the same evidence-ledger, Azure decision, validation, and caching code as the local pipeline when Azure-assisted mode is enabled
 - run YOLO and Blender sequentially on the same T4, explicitly releasing YOLO's cached CUDA allocations before the Blender phase
-- select Cycles GPU with 16 samples, denoising, one worker, 75% scale, and at most eight entities only after an OptiX or CUDA render probe succeeds
+- treat the small OptiX/CUDA render only as a device probe, then benchmark one representative reconstruction gap before the full run
+- use the planned 8–12 reconstruction fps, 50% scale, 4–8 samples, denoising, one worker, and at most eight entities as the starting production profile
+- calculate and show a full-run estimate; require an explicit override when it exceeds the configured Colab budget
 - fall back automatically to a two-worker Colab-safe Workbench profile when both GPU probes fail, and terminate a Blender gap after 15 minutes without a completed-frame marker
-- copy only complete Blender gap artifacts to Google Drive through temporary checkpoint directories, and reuse them only when plan/render contracts match
-- restore compatible completed-gap checkpoints when the same video and deterministic seed are rerun
+- checkpoint validated PNG frame manifests as well as complete gap artifacts so interruption can resume inside a gap
+- restore compatible completed-frame/gap checkpoints only when evidence, decision, plan, render, and source-content contracts match
 - save the final video and JSON reports to Google Drive before offering download; skip inline embedding for results over 80 MB
 - clearly state that Colab resources and runtime duration are not guaranteed
 

@@ -18,6 +18,7 @@ from scene_intelligence import summarize_scene
 from stitch import stitch_sequence
 from visual_output import render_annotated_visible_chunk
 from application.blender_pipeline import prepare_blender_assets, render_blender_gap
+from application.evidence_reasoning import reason_about_reconstruction
 from domain.cancellation import CancellationCheck, raise_if_cancelled
 from domain.configuration import load_validated_configuration
 from domain.evidence_contract import validate_visible_evidence_only
@@ -52,8 +53,12 @@ SEGMENT_PREPARATION_START = 0.06
 SEGMENT_PREPARATION_SPAN = 0.07
 DETECTION_START = 0.13
 DETECTION_SPAN = 0.35
-PLANNING_PROGRESS = 0.50
-RENDERING_START = 0.55
+BASE_PLANNING_PROGRESS = 0.49
+CLUE_EXTRACTION_PROGRESS = 0.51
+REASONING_PROGRESS = 0.53
+DECISION_VALIDATION_PROGRESS = 0.55
+PLANNING_PROGRESS = 0.57
+RENDERING_START = 0.58
 RENDERING_SPAN = 0.27
 EVALUATION_PROGRESS = 0.85
 STITCHING_PROGRESS = 0.94
@@ -589,9 +594,32 @@ def _prepare_reconstruction(
         progress_callback,
         options.cancellation_check,
     )
-    _report(progress_callback, "planning", PLANNING_PROGRESS, "Building scene intelligence and reconstruction plans")
+    _report(progress_callback, "planning", BASE_PLANNING_PROGRESS, "Building bounded reconstruction hypotheses")
     scene_report, blender_plan_paths, plans = _prepare_scene_and_plans(
         video_path, options, info, selection, work_dir, detections,
+    )
+    if blender_plan_paths:
+        _report(progress_callback, "extracting_clues", CLUE_EXTRACTION_PROGRESS, "Writing the visible-only evidence ledger")
+        _report(progress_callback, "reasoning", REASONING_PROGRESS, "Selecting evidence-grounded motion hypotheses")
+        reasoning_result = reason_about_reconstruction(
+            scene_report,
+            blender_plan_paths,
+            work_dir,
+            config["reasoning"],
+            options.reuse_work,
+            options.cancellation_check,
+        )
+        _report(
+            progress_callback,
+            "validating_decisions",
+            DECISION_VALIDATION_PROGRESS,
+            f"Validated the {reasoning_result.mode.replace('_', ' ')} decision trace",
+        )
+    _report(
+        progress_callback,
+        "validating_decisions",
+        PLANNING_PROGRESS,
+        "Finalized validated reconstruction plans",
     )
     return PreparedReconstruction(
         info, selection, segment_paths, plans, scene_report, work_dir, blender_plan_paths,

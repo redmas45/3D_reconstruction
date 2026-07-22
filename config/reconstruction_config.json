@@ -99,6 +99,12 @@
     "min_track_frames": 2,
     "track_interpolation_max_gap_multiplier": 4
   },
+  "reasoning": {
+    "enabled": true,
+    "request_timeout_seconds": 120,
+    "max_output_tokens": 8000,
+    "reasoning_effort": "medium"
+  },
   "visualization": {
     "visible_box_thickness": 2,
     "visible_max_tracks": 32,

@@ -13,6 +13,9 @@ const STAGE_LABELS = {
   selecting_gaps: "Selecting gaps",
   preparing: "Preparing evidence",
   detecting: "Detecting & tracking",
+  extracting_clues: "Extracting clues",
+  reasoning: "Reasoning from evidence",
+  validating_decisions: "Validating decisions",
   planning: "Planning scene",
   rendering: "Rendering",
   evaluating: "Evaluating",
@@ -26,9 +29,12 @@ const PIPELINE_STEPS = Object.freeze([
   { stage: "validating", label: "Validate input", start: 0, end: 0.04 },
   { stage: "selecting_gaps", label: "Select evidence gaps", start: 0.04, end: 0.06 },
   { stage: "preparing", label: "Prepare boundary evidence", start: 0.06, end: 0.13 },
-  { stage: "detecting", label: "Detect and track entities", start: 0.13, end: 0.5 },
-  { stage: "planning", label: "Build forensic 3D plans", start: 0.5, end: 0.55 },
-  { stage: "rendering", label: "Render inferred gaps", start: 0.55, end: 0.85 },
+  { stage: "detecting", label: "Detect and track entities", start: 0.13, end: 0.49 },
+  { stage: "planning", label: "Build bounded hypotheses", start: 0.49, end: 0.51 },
+  { stage: "extracting_clues", label: "Write visible-only clue ledger", start: 0.51, end: 0.53 },
+  { stage: "reasoning", label: "Select evidence-grounded hypotheses", start: 0.53, end: 0.55 },
+  { stage: "validating_decisions", label: "Validate decision trace", start: 0.55, end: 0.58 },
+  { stage: "rendering", label: "Render inferred gaps", start: 0.58, end: 0.85 },
   { stage: "evaluating", label: "Evaluate inferred gaps", start: 0.85, end: 0.94 },
   { stage: "stitching", label: "Stitch video and audio", start: 0.94, end: 1 },
 ]);
@@ -216,6 +222,7 @@ function createJobCard(job) {
   }
   main.append(times);
   main.append(createActivityPanel(job));
+  if (job.reasoning) main.append(createReasoningPanel(job.reasoning));
   card.append(main);
   const action = createJobAction(job);
   if (action) card.append(action);
@@ -240,6 +247,59 @@ function createActivityPanel(job) {
   details.append(summary, createPipelineSteps(job), createActivityFeed(job));
   details.addEventListener("toggle", () => rememberActivityState(job.id, details.open));
   return details;
+}
+
+/** @param {import("./api-client.js").ReasoningSummary} reasoning @returns {HTMLElement} */
+function createReasoningPanel(reasoning) {
+  const details = /** @type {HTMLDetailsElement} */ (createElement("details", "reasoning-panel"));
+  const summary = createElement("summary");
+  summary.append(createElement("span", "", "Evidence decision trace"));
+  summary.append(createElement("span", "reasoning-mode", reasoningModeLabel(reasoning)));
+  details.append(summary);
+  if (reasoning.warning) details.append(createElement("p", "reasoning-warning", reasoning.warning));
+  const clues = createElement("ul", "reasoning-clues");
+  reasoning.scene_clues.forEach((clue) => clues.append(createElement("li", "", clue)));
+  details.append(clues);
+  const decisions = createElement("div", "reasoning-decisions");
+  reasoning.decisions.forEach((decision) => decisions.append(createReasoningDecision(decision)));
+  details.append(decisions);
+  return details;
+}
+
+/** @param {import("./api-client.js").ReasoningSummary} reasoning @returns {string} */
+function reasoningModeLabel(reasoning) {
+  if (reasoning.mode === "azure" || reasoning.mode === "azure_cache") {
+    return `Azure ${reasoning.deployment || "reasoning"}`;
+  }
+  return "Deterministic fallback";
+}
+
+/** @param {import("./api-client.js").ReasoningDecision} decision @returns {HTMLElement} */
+function createReasoningDecision(decision) {
+  const card = createElement("article", "reasoning-decision");
+  const heading = createElement("div", "reasoning-decision-heading");
+  heading.append(createElement("strong", "", `Gap ${decision.gap_index + 1}: ${humanizeIdentifier(decision.selected_hypothesis_id)}`));
+  heading.append(createElement("span", "", `${Math.round(decision.confidence * 100)}% confidence`));
+  card.append(heading, createElement("p", "", decision.decision_summary));
+  const evidence = decision.evidence_references.length
+    ? decision.evidence_references.join(" · ")
+    : "No specific evidence reference supplied";
+  card.append(createElement("small", "reasoning-evidence", `Evidence: ${evidence}`));
+  if (decision.rejected_hypotheses.length) {
+    const rejected = decision.rejected_hypotheses
+      .map((item) => `${humanizeIdentifier(item.id)} — ${item.reason}`)
+      .join(" · ");
+    card.append(createElement("small", "reasoning-rejected", `Rejected: ${rejected}`));
+  }
+  if (decision.unknowns.length) {
+    card.append(createElement("small", "reasoning-unknowns", `Unknowns: ${decision.unknowns.join(" · ")}`));
+  }
+  return card;
+}
+
+/** @param {string} identifier @returns {string} */
+function humanizeIdentifier(identifier) {
+  return identifier.replaceAll("_", " ");
 }
 
 /** @param {string} jobId @param {boolean} isOpen @returns {void} */
@@ -368,6 +428,7 @@ function createOutputCard(job) {
   body.append(createElement("h3", "", job.source_name.replace(/(\.[^.]+)$/, "") + " — reconstructed"));
   const completionDate = job.completed_at ? new Date(job.completed_at).toLocaleString() : "Completed";
   body.append(createElement("p", "output-meta", `${formatByteCount(job.size_bytes)} · ${formatDuration(job.elapsed_seconds)} processing · ${completionDate}`));
+  if (job.reasoning) body.append(createReasoningPanel(job.reasoning));
   const actions = createElement("div", "output-actions");
   const download = createElement("a", "action-button", "Download video");
   download.href = job.download_url;

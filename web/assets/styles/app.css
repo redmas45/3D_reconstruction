@@ -254,6 +254,21 @@ h2 { font-size: 1.35rem; line-height: 1.2; margin-bottom: 0; letter-spacing: -0.
 .activity-feed { max-height: 150px; overflow-y: auto; margin: 0 0 0.2rem; padding: 0.75rem 0 0.15rem; border-top: 1px solid var(--border); list-style: none; }
 .activity-item { display: grid; grid-template-columns: 68px minmax(0, 1fr) auto; gap: 0.7rem; padding: 0.25rem 0; color: var(--muted); font-size: 0.66rem; }
 .activity-time, .activity-progress { color: var(--subtle); font-variant-numeric: tabular-nums; }
+.reasoning-panel { margin-top: 0.7rem; border: 1px solid rgba(12, 202, 210, 0.2); border-radius: 7px; background: rgba(12, 202, 210, 0.025); }
+.reasoning-panel > summary { min-height: 38px; padding: 0 0.75rem; display: flex; align-items: center; justify-content: space-between; gap: 1rem; cursor: pointer; list-style: none; color: var(--foreground); font-size: 0.71rem; font-weight: 700; }
+.reasoning-panel > summary::-webkit-details-marker { display: none; }
+.reasoning-mode { color: var(--primary); font-size: 0.63rem; font-weight: 700; }
+.reasoning-warning { margin: 0; padding: 0.6rem 0.75rem; border-top: 1px solid var(--border); color: var(--warning); font-size: 0.66rem; }
+.reasoning-clues { margin: 0; padding: 0.7rem 1.8rem; border-top: 1px solid var(--border); color: var(--muted); font-size: 0.66rem; }
+.reasoning-clues li + li { margin-top: 0.2rem; }
+.reasoning-decisions { max-height: 260px; overflow-y: auto; padding: 0 0.7rem 0.7rem; display: grid; gap: 0.45rem; }
+.reasoning-decision { padding: 0.65rem; border: 1px solid var(--border); border-radius: 6px; background: var(--surface-soft); }
+.reasoning-decision-heading { display: flex; justify-content: space-between; gap: 1rem; font-size: 0.66rem; }
+.reasoning-decision-heading span { color: var(--primary); white-space: nowrap; }
+.reasoning-decision p { margin: 0.35rem 0; color: var(--muted); font-size: 0.66rem; }
+.reasoning-decision small { display: block; color: var(--subtle); font-size: 0.61rem; overflow-wrap: anywhere; }
+.reasoning-rejected { margin-top: 0.25rem; }
+.reasoning-unknowns { margin-top: 0.25rem; color: var(--warning) !important; }
 .small-delete { background: transparent; border: 1px solid var(--border); border-radius: 6px; color: var(--muted); cursor: pointer; padding: 0.45rem 0.65rem; font-size: 0.7rem; }
 .small-delete:hover { color: var(--danger); border-color: rgba(239, 68, 68, 0.5); }
 .small-cancel { background: transparent; border: 1px solid rgba(245, 158, 11, 0.45); border-radius: 6px; color: var(--warning); cursor: pointer; padding: 0.45rem 0.65rem; font-size: 0.7rem; }

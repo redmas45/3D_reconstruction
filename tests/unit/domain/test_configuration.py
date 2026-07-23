@@ -66,6 +66,16 @@ class ConfigurationValidationTests(unittest.TestCase):
 
         validate_configuration(cycles_configuration)
 
+    def test_rejects_runtime_budget_below_one_minute(self) -> None:
+        invalid_configuration = copy.deepcopy(self.configuration)
+        invalid_configuration["renderer"]["maximum_predicted_render_seconds"] = 59
+
+        with self.assertRaisesRegex(
+            ConfigurationValidationError,
+            "maximum_predicted_render_seconds",
+        ):
+            validate_configuration(invalid_configuration)
+
     def test_rejects_unsupported_cycles_compute_device(self) -> None:
         invalid_configuration = copy.deepcopy(self.configuration)
         invalid_configuration["renderer"]["cycles_compute_device"] = "METAL"

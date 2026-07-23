@@ -15,21 +15,39 @@ const UPLOAD_TIMEOUT_MILLISECONDS = 300_000;
 /**
  * @typedef {Object} ReasoningDecision
  * @property {number} gap_index
- * @property {string} selected_hypothesis_id
+ * @property {string} gap_summary
  * @property {string[]} evidence_references
+ * @property {string[]} clue_ids
+ * @property {number} confidence
+ * @property {string[]} unknowns
+ * @property {ReasoningEntityDecision[]} entities
+ */
+
+/**
+ * @typedef {Object} ReasoningEntityDecision
+ * @property {string} entity_id
+ * @property {string} selected_hypothesis_id
  * @property {string} decision_summary
  * @property {{id: string, reason: string}[]} rejected_hypotheses
  * @property {number} confidence
- * @property {string[]} unknowns
  */
 
 /**
  * @typedef {Object} ReasoningSummary
  * @property {string} status
+ * @property {number} [schema_version]
  * @property {string} mode
  * @property {string|null} deployment
  * @property {string|null} warning
  * @property {string[]} scene_clues
+ * @property {{id:string, scope:string, category:string, statement:string, confidence:number}[]} [clues]
+ * @property {string} [headline]
+ * @property {string} [whole_video_summary]
+ * @property {{statement:string, clue_ids:string[], gap_indexes:number[]}[]} [story_points]
+ * @property {{gap_index:number, before_observed:string, inside_inferred:string, after_observed:string, confidence:number, unknowns:string[]}[]} [gap_summaries]
+ * @property {boolean} [causal_link_supported]
+ * @property {number} [confidence]
+ * @property {string[]} [unknowns]
  * @property {ReasoningDecision[]} decisions
  */
 

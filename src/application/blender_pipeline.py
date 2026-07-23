@@ -16,10 +16,16 @@ from infrastructure.blender_runner import (
     DEFAULT_RENDER_STALL_TIMEOUT_SECONDS,
     BlenderProgressCallback,
     BlenderRenderRequest,
+    BlenderRenderResult,
     render_with_blender,
 )
 from infrastructure.camera_motion_estimator import estimate_camera_motion
-from infrastructure.media_tools import MediaProcessingError, inspect_video_contract
+from infrastructure.media_tools import (
+    MediaProcessingError,
+    VideoContract,
+    encode_png_sequence,
+    inspect_video_contract,
+)
 from infrastructure.video_frames import export_video_frame
 
 
@@ -80,15 +86,33 @@ def render_blender_gap(
     report_path = blender_directory / "render_report.json"
     blend_path = blender_directory / "scene.blend"
     log_path = blender_directory / "blender.log"
+    frame_directory = _frame_directory(plan_path, blender_directory)
     if reuse_render and _render_cache_is_complete(plan_path, output_path, report_path, blend_path):
         return output_path
-    request = BlenderRenderRequest(plan_path, output_path, report_path, blend_path, log_path, "animation")
-    render_with_blender(
+    request = BlenderRenderRequest(
+        plan_path, frame_directory, report_path, blend_path, log_path, "sparse_animation",
+    )
+    render_result = render_with_blender(
         project_root,
         request,
         timeout_seconds=stall_timeout_seconds,
         cancellation_check=cancellation_check,
         progress_callback=progress_callback,
+    )
+    if not isinstance(render_result, BlenderRenderResult):
+        return output_path
+    plan = json.loads(plan_path.read_text(encoding="utf-8"))
+    encode_png_sequence(
+        frame_directory,
+        min(float(plan["fps"]), float(plan["render"].get("target_fps", 10))),
+        VideoContract(
+            width=_production_resolution(plan["render"])[0],
+            height=_production_resolution(plan["render"])[1],
+            fps=float(plan["fps"]),
+            frame_count=int(plan["frame_count"]),
+        ),
+        output_path,
+        cancellation_check,
     )
     return output_path
 
@@ -185,7 +209,7 @@ def _render_report_matches_plan(plan_bytes: bytes, plan: dict, report: object) -
         expected_resolution = _production_resolution(render_contract)
         return all((
             report["plan_hash"] == hashlib.sha256(plan_bytes).hexdigest(),
-            report["mode"] == "animation",
+            report["mode"] in {"animation", "sparse_animation"},
             report["render_engine"] == render_contract["engine"],
             int(report["frame_count"]) == int(plan["frame_count"]),
             report["resolution"] == expected_resolution,
@@ -219,6 +243,11 @@ def _cached_video_matches_plan(output_path: Path, plan: dict) -> bool:
 def _even_render_dimension(value: int) -> int:
     bounded_value = max(2, value)
     return bounded_value if bounded_value % 2 == 0 else bounded_value + 1
+
+
+def _frame_directory(plan_path: Path, blender_directory: Path) -> Path:
+    plan_hash = hashlib.sha256(plan_path.read_bytes()).hexdigest()[:12]
+    return blender_directory / "renders" / f"frames_{plan_hash}"
 
 
 def _is_nonempty_file(path: Path) -> bool:

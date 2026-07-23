@@ -269,6 +269,29 @@ h2 { font-size: 1.35rem; line-height: 1.2; margin-bottom: 0; letter-spacing: -0.
 .reasoning-decision small { display: block; color: var(--subtle); font-size: 0.61rem; overflow-wrap: anywhere; }
 .reasoning-rejected { margin-top: 0.25rem; }
 .reasoning-unknowns { margin-top: 0.25rem; color: var(--warning) !important; }
+.story-overview { padding: 0.8rem; border-top: 1px solid var(--border); background: linear-gradient(135deg, rgba(12, 202, 210, 0.07), transparent); }
+.story-heading, .gap-timeline-heading { display: flex; align-items: center; justify-content: space-between; gap: 1rem; font-size: 0.72rem; }
+.story-heading span, .gap-timeline-heading span { color: var(--primary); font-size: 0.62rem; white-space: nowrap; }
+.story-overview p { margin: 0.4rem 0; color: var(--muted); font-size: 0.68rem; line-height: 1.55; }
+.story-overview small { display: inline-block; padding: 0.2rem 0.45rem; border-radius: 999px; font-size: 0.57rem; }
+.causal-supported { color: var(--success); background: rgba(19, 178, 118, 0.1); }
+.causal-limited { color: var(--warning); background: rgba(238, 166, 64, 0.1); }
+.story-points { margin: 0.55rem 0 0; padding-left: 1.1rem; color: var(--muted); font-size: 0.64rem; }
+.evidence-clues { padding-top: 0.65rem; border-top: 1px solid var(--border); }
+.evidence-clues > strong { padding: 0 0.8rem; font-size: 0.65rem; }
+.gap-timelines { padding: 0 0.7rem 0.7rem; display: grid; gap: 0.55rem; }
+.gap-timeline { padding: 0.7rem; border: 1px solid var(--border); border-radius: 7px; background: var(--surface-soft); }
+.timeline-phases { margin-top: 0.55rem; display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.4rem; }
+.timeline-phase { min-width: 0; padding: 0.5rem; border-radius: 5px; border: 1px solid var(--border); }
+.timeline-phase.inferred { border-color: rgba(12, 202, 210, 0.35); background: rgba(12, 202, 210, 0.055); }
+.timeline-phase small { color: var(--primary); font-size: 0.56rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; }
+.timeline-phase p, .entity-decision p { margin: 0.28rem 0 0; color: var(--muted); font-size: 0.62rem; line-height: 1.45; }
+.entity-decisions { margin-top: 0.55rem; display: grid; gap: 0.35rem; }
+.entity-decision { display: grid; grid-template-columns: 1fr auto; gap: 0.15rem 0.5rem; padding-top: 0.4rem; border-top: 1px solid var(--border); font-size: 0.61rem; }
+.entity-decision span { color: var(--primary); }
+.entity-decision p, .entity-decision small { grid-column: 1 / -1; }
+.entity-decision small { color: var(--subtle); overflow-wrap: anywhere; }
+@media (max-width: 760px) { .timeline-phases { grid-template-columns: 1fr; } }
 .small-delete { background: transparent; border: 1px solid var(--border); border-radius: 6px; color: var(--muted); cursor: pointer; padding: 0.45rem 0.65rem; font-size: 0.7rem; }
 .small-delete:hover { color: var(--danger); border-color: rgba(239, 68, 68, 0.5); }
 .small-cancel { background: transparent; border: 1px solid rgba(245, 158, 11, 0.45); border-radius: 6px; color: var(--warning); cursor: pointer; padding: 0.45rem 0.65rem; font-size: 0.7rem; }

@@ -257,6 +257,17 @@ function createReasoningPanel(reasoning) {
   summary.append(createElement("span", "reasoning-mode", reasoningModeLabel(reasoning)));
   details.append(summary);
   if (reasoning.warning) details.append(createElement("p", "reasoning-warning", reasoning.warning));
+  if (reasoning.whole_video_summary) details.append(createStoryOverview(reasoning));
+  details.append(createEvidenceClues(reasoning));
+  if (reasoning.gap_summaries?.length) {
+    const timelines = createElement("div", "gap-timelines");
+    reasoning.gap_summaries.forEach((gap) => {
+      const decision = reasoning.decisions.find((item) => item.gap_index === gap.gap_index);
+      timelines.append(createGapTimeline(gap, decision));
+    });
+    details.append(timelines);
+    return details;
+  }
   const clues = createElement("ul", "reasoning-clues");
   reasoning.scene_clues.forEach((clue) => clues.append(createElement("li", "", clue)));
   details.append(clues);
@@ -266,12 +277,102 @@ function createReasoningPanel(reasoning) {
   return details;
 }
 
+/** @param {import("./api-client.js").ReasoningSummary} reasoning @returns {HTMLElement} */
+function createStoryOverview(reasoning) {
+  const overview = createElement("section", "story-overview");
+  const heading = createElement("div", "story-heading");
+  heading.append(createElement("strong", "", reasoning.headline || "Reconstructed story"));
+  if (typeof reasoning.confidence === "number") {
+    heading.append(createElement("span", "", `${Math.round(reasoning.confidence * 100)}% supported`));
+  }
+  overview.append(heading, createElement("p", "", reasoning.whole_video_summary || ""));
+  const badge = createElement(
+    "small",
+    reasoning.causal_link_supported ? "causal-supported" : "causal-limited",
+    reasoning.causal_link_supported
+      ? "Causal links are evidence-supported"
+      : "Sequence inferred; causal links are not claimed",
+  );
+  overview.append(badge);
+  if (reasoning.story_points?.length) {
+    const points = createElement("ul", "story-points");
+    reasoning.story_points.forEach((item) => points.append(createElement("li", "", item.statement)));
+    overview.append(points);
+  }
+  return overview;
+}
+
+/** @param {import("./api-client.js").ReasoningSummary} reasoning @returns {HTMLElement} */
+function createEvidenceClues(reasoning) {
+  const section = createElement("section", "evidence-clues");
+  section.append(createElement("strong", "", "Evidence clues from the visible 75%"));
+  const clues = createElement("ul", "reasoning-clues");
+  const statements = reasoning.clues?.map((item) => item.statement) || reasoning.scene_clues;
+  statements.forEach((clue) => clues.append(createElement("li", "", clue)));
+  section.append(clues);
+  return section;
+}
+
+/**
+ * @param {{gap_index:number, before_observed:string, inside_inferred:string, after_observed:string, confidence:number, unknowns:string[]}} gap
+ * @param {import("./api-client.js").ReasoningDecision|undefined} decision
+ * @returns {HTMLElement}
+ */
+function createGapTimeline(gap, decision) {
+  const card = createElement("article", "gap-timeline");
+  const heading = createElement("div", "gap-timeline-heading");
+  heading.append(createElement("strong", "", `Gap ${gap.gap_index + 1}`));
+  heading.append(createElement("span", "", `${Math.round(gap.confidence * 100)}% confidence`));
+  card.append(heading);
+  const phases = createElement("div", "timeline-phases");
+  phases.append(
+    createTimelinePhase("Before · observed", gap.before_observed, "observed"),
+    createTimelinePhase("Inside · inferred", gap.inside_inferred, "inferred"),
+    createTimelinePhase("After · observed", gap.after_observed, "observed"),
+  );
+  card.append(phases);
+  if (decision) card.append(createEntityDecisions(decision));
+  if (gap.unknowns.length) {
+    card.append(createElement("small", "reasoning-unknowns", `Unknowns: ${gap.unknowns.join(" · ")}`));
+  }
+  return card;
+}
+
+/** @param {string} label @param {string} text @param {string} state @returns {HTMLElement} */
+function createTimelinePhase(label, text, state) {
+  const phase = createElement("div", `timeline-phase ${state}`);
+  phase.append(createElement("small", "", label), createElement("p", "", text));
+  return phase;
+}
+
+/** @param {import("./api-client.js").ReasoningDecision} decision @returns {HTMLElement} */
+function createEntityDecisions(decision) {
+  const entities = createElement("div", "entity-decisions");
+  decision.entities.forEach((entity) => {
+    const row = createElement("div", "entity-decision");
+    row.append(createElement(
+      "strong", "", `${entity.entity_id}: ${humanizeIdentifier(entity.selected_hypothesis_id.split(`${entity.entity_id}_`).pop() || entity.selected_hypothesis_id)}`,
+    ));
+    row.append(createElement("span", "", `${Math.round(entity.confidence * 100)}%`));
+    row.append(createElement("p", "", entity.decision_summary));
+    if (entity.rejected_hypotheses.length) {
+      const rejected = entity.rejected_hypotheses
+        .map((item) => humanizeIdentifier(item.id.split(`${entity.entity_id}_`).pop() || item.id))
+        .join(", ");
+      row.append(createElement("small", "", `Rejected: ${rejected}`));
+    }
+    entities.append(row);
+  });
+  return entities;
+}
+
 /** @param {import("./api-client.js").ReasoningSummary} reasoning @returns {string} */
 function reasoningModeLabel(reasoning) {
+  const schemaLabel = reasoning.schema_version === 2 ? "Story v2 · " : "";
   if (reasoning.mode === "azure" || reasoning.mode === "azure_cache") {
-    return `Azure ${reasoning.deployment || "reasoning"}`;
+    return `${schemaLabel}Azure ${reasoning.deployment || "reasoning"}`;
   }
-  return "Deterministic fallback";
+  return `${schemaLabel}Deterministic fallback`;
 }
 
 /** @param {import("./api-client.js").ReasoningDecision} decision @returns {HTMLElement} */

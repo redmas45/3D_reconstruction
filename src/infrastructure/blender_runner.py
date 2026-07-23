@@ -247,8 +247,8 @@ def _signal_process(process: subprocess.Popen[str], signal_number: signal.Signal
 
 
 def _validate_request(request: BlenderRenderRequest) -> None:
-    if request.mode not in {"preview", "animation"}:
-        raise ValueError("Blender render mode must be preview or animation")
+    if request.mode not in {"preview", "animation", "sparse_animation"}:
+        raise ValueError("Blender render mode must be preview, animation, or sparse_animation")
     if not request.plan_path.is_file():
         raise FileNotFoundError(f"Reconstruction plan is missing: {request.plan_path}")
     if request.plan_path.resolve() == request.output_path.resolve():
@@ -256,10 +256,18 @@ def _validate_request(request: BlenderRenderRequest) -> None:
 
 
 def _validate_outputs(request: BlenderRenderRequest) -> None:
-    missing_paths = [
-        output_path for output_path in (request.output_path, request.report_path, request.blend_path)
+    render_exists = (
+        request.output_path.is_dir()
+        if request.mode == "sparse_animation"
+        else request.output_path.is_file()
+    )
+    missing_paths = []
+    if not render_exists:
+        missing_paths.append(request.output_path)
+    missing_paths.extend(
+        output_path for output_path in (request.report_path, request.blend_path)
         if not output_path.is_file()
-    ]
+    )
     if missing_paths:
         missing_text = ", ".join(str(path) for path in missing_paths)
         raise BlenderRenderError(f"Blender finished without required outputs: {missing_text}")

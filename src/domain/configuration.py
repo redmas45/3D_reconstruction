@@ -13,6 +13,8 @@ MAXIMUM_RENDER_STALL_TIMEOUT_SECONDS = 86_400
 SUPPORTED_BLENDER_ENGINES = frozenset({"BLENDER_EEVEE_NEXT", "BLENDER_WORKBENCH", "CYCLES"})
 SUPPORTED_CYCLES_COMPUTE_DEVICES = frozenset({"CUDA", "OPTIX"})
 MAXIMUM_CYCLES_SAMPLES = 4_096
+MINIMUM_RENDER_RUNTIME_BUDGET_SECONDS = 60
+MAXIMUM_RENDER_RUNTIME_BUDGET_SECONDS = 21_600
 MINIMUM_REASONING_TIMEOUT_SECONDS = 10
 MAXIMUM_REASONING_TIMEOUT_SECONDS = 600
 MINIMUM_REASONING_OUTPUT_TOKENS = 512
@@ -83,6 +85,7 @@ def _validate_renderer_configuration(renderer_configuration: dict) -> None:
         raise ConfigurationValidationError(
             "renderer.gap_render_stall_timeout_seconds must be between 60 and 86400"
         )
+    _validate_smart_renderer_configuration(renderer_configuration)
     _validate_optional_cycles_configuration(renderer_configuration)
 
 
@@ -97,6 +100,56 @@ def _validate_reasoning_configuration(reasoning_configuration: dict) -> None:
         raise ConfigurationValidationError("reasoning.max_output_tokens must be between 512 and 32000")
     if reasoning_configuration.get("reasoning_effort") not in SUPPORTED_REASONING_EFFORTS:
         raise ConfigurationValidationError("reasoning.reasoning_effort is unsupported")
+    if _required_integer(reasoning_configuration, "planner_schema_version") != 2:
+        raise ConfigurationValidationError("reasoning.planner_schema_version must be 2")
+    if not 1 <= _required_integer(reasoning_configuration, "maximum_gaps_per_batch") <= 16:
+        raise ConfigurationValidationError("reasoning.maximum_gaps_per_batch must be between 1 and 16")
+    if not 1 <= _required_integer(reasoning_configuration, "maximum_images_per_batch") <= 64:
+        raise ConfigurationValidationError("reasoning.maximum_images_per_batch must be between 1 and 64")
+    if reasoning_configuration.get("image_detail") not in {"low", "high", "original", "auto"}:
+        raise ConfigurationValidationError("reasoning.image_detail is unsupported")
+    _validate_reasoning_images(reasoning_configuration.get("images"))
+
+
+def _validate_reasoning_images(value: object) -> None:
+    if not isinstance(value, dict):
+        raise ConfigurationValidationError("reasoning.images must be an object")
+    for field_name in ("max_global_keyframes", "boundary_frames_per_side", "crops_per_track"):
+        field_value = _required_integer(value, field_name)
+        if not 1 <= field_value <= 32:
+            raise ConfigurationValidationError(f"reasoning.images.{field_name} must be between 1 and 32")
+
+
+def _validate_smart_renderer_configuration(configuration: dict) -> None:
+    bounded_fields = {
+        "target_fps": (1, 60),
+        "scale_percent": (1, 100),
+        "maximum_detailed_entities": (1, 64),
+        "maximum_gpu_workers": (1, 1),
+        "maximum_cpu_workers": (1, 16),
+        "checkpoint_frame_batch": (1, 500),
+        "diagnostic_pose_count": (1, 16),
+    }
+    for field_name, bounds in bounded_fields.items():
+        value = _required_integer(configuration, field_name)
+        if not bounds[0] <= value <= bounds[1]:
+            raise ConfigurationValidationError(
+                f"renderer.{field_name} must be between {bounds[0]} and {bounds[1]}"
+            )
+    if not isinstance(configuration.get("requires_preview_approval"), bool):
+        raise ConfigurationValidationError("renderer.requires_preview_approval must be boolean")
+    for field_name in (
+        "runtime_budget_enabled",
+        "allow_runtime_budget_override",
+        "interactive_preview_approval",
+    ):
+        if not isinstance(configuration.get(field_name), bool):
+            raise ConfigurationValidationError(f"renderer.{field_name} must be boolean")
+    maximum_runtime = _required_integer(configuration, "maximum_predicted_render_seconds")
+    if not MINIMUM_RENDER_RUNTIME_BUDGET_SECONDS <= maximum_runtime <= MAXIMUM_RENDER_RUNTIME_BUDGET_SECONDS:
+        raise ConfigurationValidationError(
+            "renderer.maximum_predicted_render_seconds must be between 60 and 21600"
+        )
 
 
 def _validate_optional_cycles_configuration(renderer_configuration: dict) -> None:

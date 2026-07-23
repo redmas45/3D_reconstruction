@@ -77,20 +77,24 @@ def _valid_reasoning_summary(payload: object) -> bool:
         return False
     if payload.get("status") != "completed" or not isinstance(payload.get("mode"), str):
         return False
-    scene_clues = payload.get("scene_clues")
-    decisions = payload.get("decisions")
+    scene_clues, decisions = payload.get("scene_clues"), payload.get("decisions")
     if not isinstance(scene_clues, list) or not isinstance(decisions, list):
         return False
     if len(scene_clues) > MAXIMUM_PUBLIC_REASONING_ITEMS or len(decisions) > MAXIMUM_PUBLIC_REASONING_ITEMS:
         return False
-    return all(isinstance(item, str) for item in scene_clues) and all(
+    base_is_valid = all(isinstance(item, str) for item in scene_clues) and all(
         _valid_public_decision(item) for item in decisions
     )
+    if not base_is_valid or payload.get("schema_version", 1) == 1:
+        return base_is_valid
+    return _valid_story_summary(payload)
 
 
 def _valid_public_decision(value: object) -> bool:
     if not isinstance(value, dict):
         return False
+    if isinstance(value.get("entities"), list):
+        return _valid_public_gap_decision(value)
     confidence = value.get("confidence")
     required_text = ("selected_hypothesis_id", "decision_summary")
     evidence_references = value.get("evidence_references")
@@ -107,6 +111,98 @@ def _valid_public_decision(value: object) -> bool:
         isinstance(confidence, (int, float)) and not isinstance(confidence, bool),
         0.0 <= float(confidence) <= 1.0,
     ))
+
+
+def _valid_public_gap_decision(value: dict) -> bool:
+    confidence = value.get("confidence")
+    entities = value.get("entities")
+    return all((
+        isinstance(value.get("gap_index"), int) and not isinstance(value.get("gap_index"), bool),
+        isinstance(value.get("gap_summary"), str),
+        _valid_public_text_list(value.get("evidence_references")),
+        _valid_public_text_list(value.get("clue_ids")),
+        _valid_public_text_list(value.get("unknowns")),
+        isinstance(entities, list),
+        len(entities) <= MAXIMUM_PUBLIC_REASONING_ITEMS if isinstance(entities, list) else False,
+        all(_valid_public_entity_decision(item) for item in entities) if isinstance(entities, list) else False,
+        isinstance(confidence, (int, float)) and not isinstance(confidence, bool),
+        0.0 <= float(confidence) <= 1.0,
+    ))
+
+
+def _valid_public_entity_decision(value: object) -> bool:
+    if not isinstance(value, dict):
+        return False
+    confidence = value.get("confidence")
+    rejected = value.get("rejected_hypotheses")
+    return all((
+        isinstance(value.get("entity_id"), str),
+        isinstance(value.get("selected_hypothesis_id"), str),
+        isinstance(value.get("decision_summary"), str),
+        isinstance(rejected, list),
+        len(rejected) <= MAXIMUM_PUBLIC_REASONING_ITEMS if isinstance(rejected, list) else False,
+        all(_valid_public_rejection(item) for item in rejected) if isinstance(rejected, list) else False,
+        isinstance(confidence, (int, float)) and not isinstance(confidence, bool),
+        0.0 <= float(confidence) <= 1.0,
+    ))
+
+
+def _valid_story_summary(payload: dict) -> bool:
+    required_text = ("headline", "whole_video_summary")
+    story_points = payload.get("story_points")
+    gap_summaries = payload.get("gap_summaries")
+    clues = payload.get("clues")
+    confidence = payload.get("confidence")
+    return all((
+        all(isinstance(payload.get(field), str) for field in required_text),
+        isinstance(payload.get("causal_link_supported"), bool),
+        isinstance(story_points, list) and len(story_points) <= MAXIMUM_PUBLIC_REASONING_ITEMS,
+        isinstance(gap_summaries, list) and len(gap_summaries) <= MAXIMUM_PUBLIC_REASONING_ITEMS,
+        isinstance(clues, list) and len(clues) <= MAXIMUM_PUBLIC_REASONING_ITEMS,
+        all(_valid_public_clue(item) for item in clues) if isinstance(clues, list) else False,
+        all(_valid_story_point(item) for item in story_points) if isinstance(story_points, list) else False,
+        all(_valid_gap_summary(item) for item in gap_summaries) if isinstance(gap_summaries, list) else False,
+        isinstance(confidence, (int, float)) and not isinstance(confidence, bool),
+        0.0 <= float(confidence) <= 1.0,
+    ))
+
+
+def _valid_public_clue(value: object) -> bool:
+    return (
+        isinstance(value, dict)
+        and all(isinstance(value.get(field), str) for field in ("id", "scope", "category", "statement"))
+        and isinstance(value.get("confidence"), (int, float))
+        and not isinstance(value.get("confidence"), bool)
+        and 0.0 <= float(value["confidence"]) <= 1.0
+    )
+
+
+def _valid_story_point(value: object) -> bool:
+    return (
+        isinstance(value, dict)
+        and isinstance(value.get("statement"), str)
+        and _valid_public_text_list(value.get("clue_ids"))
+        and isinstance(value.get("gap_indexes"), list)
+        and all(
+            isinstance(item, int) and not isinstance(item, bool)
+            for item in value.get("gap_indexes", [])
+        )
+    )
+
+
+def _valid_gap_summary(value: object) -> bool:
+    confidence = value.get("confidence") if isinstance(value, dict) else None
+    return (
+        isinstance(value, dict)
+        and isinstance(value.get("gap_index"), int)
+        and all(isinstance(value.get(field), str) for field in (
+            "before_observed", "inside_inferred", "after_observed",
+        ))
+        and _valid_public_text_list(value.get("unknowns"))
+        and isinstance(confidence, (int, float))
+        and not isinstance(confidence, bool)
+        and 0.0 <= float(confidence) <= 1.0
+    )
 
 
 def _valid_public_text_list(value: object) -> bool:

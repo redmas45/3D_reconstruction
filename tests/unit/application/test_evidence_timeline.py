@@ -1,3 +1,4 @@
+import json
 import random
 import sys
 import tempfile
@@ -226,6 +227,55 @@ class EvidenceTimelineTests(unittest.TestCase):
                 _render_blender_gaps(context, None)
 
         self.assertTrue(sibling_stopped.is_set())
+
+    def test_runtime_budget_stops_after_representative_gap(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            work_directory = Path(temporary_directory)
+            plan_paths = []
+            for gap_index, duration_seconds in enumerate((1.0, 3.0)):
+                plan_path = work_directory / f"plan_{gap_index}.json"
+                plan_path.write_text(json.dumps({
+                    "gap_index": gap_index,
+                    "fps": 30.0,
+                    "duration_seconds": duration_seconds,
+                    "render": {"target_fps": 10},
+                    "entities": [{"fidelity_tier": "supported"}],
+                }), encoding="utf-8")
+                plan_paths.append(plan_path)
+            context = TimelineRenderContext(
+                video_path=Path("source.mp4"),
+                renderer_mode="blender",
+                configuration={"renderer": {
+                    "max_parallel_gap_renders": 2,
+                    "runtime_budget_enabled": True,
+                    "maximum_predicted_render_seconds": 60,
+                    "allow_runtime_budget_override": False,
+                    "interactive_preview_approval": False,
+                }},
+                prepared=SimpleNamespace(
+                    gap_selection={"hidden_ranges": [[0, 29], [30, 119]]},
+                    blender_plan_paths=plan_paths,
+                    work_dir=work_directory,
+                ),
+                reuse_work=False,
+                blender_rendered_paths={},
+                cancellation_check=None,
+            )
+
+            with (
+                patch(
+                    "application.reconstruction_pipeline._render_blender_hidden_segment",
+                    return_value=work_directory / "representative.mp4",
+                ) as render_mock,
+                patch(
+                    "application.reconstruction_pipeline._representative_elapsed_seconds",
+                    return_value=120.0,
+                ),
+            ):
+                with self.assertRaisesRegex(RuntimeError, "runtime budget"):
+                    _render_blender_gaps(context, None)
+
+        render_mock.assert_called_once()
 
     def test_keyboard_interrupt_stops_running_gap_workers(self) -> None:
         sibling_started = threading.Event()

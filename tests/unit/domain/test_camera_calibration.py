@@ -6,7 +6,12 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
-from domain.camera_calibration import build_camera_contract, calibration_confidence, robust_height_prior
+from domain.camera_calibration import (
+    build_camera_contract,
+    calibration_confidence,
+    estimate_ground_geometry,
+    robust_height_prior,
+)
 
 
 class CameraCalibrationTests(unittest.TestCase):
@@ -45,6 +50,26 @@ class CameraCalibrationTests(unittest.TestCase):
         self.assertFalse(contract["motion_applied_to_render"])
         self.assertNotIn("ground_reprojection_score", contract["calibration_report"]["components"])
         self.assertLess(contract["calibration_confidence"], 0.50)
+        self.assertEqual("stabilized_forensic_view", contract["presentation_mode"])
+
+    def test_visible_person_contacts_fit_a_per_video_horizon(self) -> None:
+        detections = []
+        for height in range(50, 151, 10):
+            bottom = 200 + round(1.5 * height)
+            detections.append({
+                "bbox": [200, bottom - height, 240, bottom],
+                "confidence": 0.9,
+            })
+
+        report = estimate_ground_geometry(
+            [{"class_name": "person", "detections": detections}],
+            frame_width=640,
+            frame_height=480,
+        )
+
+        self.assertTrue(report["supported"])
+        self.assertAlmostEqual(200 / 480, report["horizon_normalized_y"], places=3)
+        self.assertGreater(report["confidence"], 0.9)
 
 
 if __name__ == "__main__":

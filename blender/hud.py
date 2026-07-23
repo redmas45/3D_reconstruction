@@ -27,8 +27,13 @@ def _build_header(plan: dict, camera: bpy.types.Object) -> None:
         _overlay_location(-3.45, 1.54),
         0.16 * OVERLAY_SCALE,
     )
+    view_label = (
+        "STABILIZED VIEW"
+        if plan["camera"].get("presentation_mode") == "stabilized_forensic_view"
+        else "SOURCE-ALIGNED VIEW"
+    )
     confidence_text = _camera_text(
-        f"SCENE {confidence:.0%}  |  CAMERA PRIOR {calibration:.0%}  |  INFERRED, NOT GROUND TRUTH",
+        f"SCENE {confidence:.0%}  |  CAMERA {calibration:.0%}  |  {view_label}  |  INFERRED",
         camera,
         _overlay_location(-3.45, -1.86),
         0.115 * OVERLAY_SCALE,

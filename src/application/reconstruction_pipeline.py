@@ -1,7 +1,9 @@
 """Coordinates evidence analysis, reconstruction rendering, and final video assembly."""
 
 import random
+import hashlib
 import threading
+import time
 from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -27,6 +29,14 @@ from domain.reconstruction_cache import (
     gap_cache_configuration as _gap_cache_configuration,
     selection_cache_is_compatible as _selection_cache_is_compatible,
     source_video_contract as _source_video_contract,
+)
+from domain.render_runtime_budget import (
+    RepresentativePreviewApprovalRequired,
+    enforce_runtime_budget,
+    gap_render_costs,
+    preview_is_approved,
+    predicted_total_seconds,
+    representative_gap_index,
 )
 from infrastructure.blender_runner import DEFAULT_RENDER_STALL_TIMEOUT_SECONDS, find_blender_executable
 from infrastructure.json_files import read_json_file, write_json_file
@@ -448,7 +458,131 @@ def _render_blender_gaps(
     raise_if_cancelled(context.cancellation_check)
     gap_count = len(context.prepared.gap_selection["hidden_ranges"])
     worker_count = _parallel_gap_renderer_count(context.configuration, gap_count)
+    if _runtime_budget_enabled(context.configuration) and gap_count > 0:
+        return _render_blender_gaps_with_budget(
+            context, progress_callback, worker_count,
+        )
+    return _render_blender_gap_indexes(
+        context, progress_callback, list(range(gap_count)), gap_count, worker_count,
+    )
+
+
+def _render_blender_gaps_with_budget(
+    context: TimelineRenderContext,
+    progress_callback: ProgressCallback | None,
+    worker_count: int,
+) -> dict[int, Path]:
+    plans = _read_blender_plans(context.prepared.blender_plan_paths)
+    costs = gap_render_costs(plans)
+    representative_index = representative_gap_index(costs)
+    _report(
+        progress_callback,
+        "rendering",
+        RENDERING_START,
+        f"Benchmarking representative gap {representative_index + 1} before the full render",
+    )
+    started_at = time.perf_counter()
+    representative_path = _render_blender_hidden_segment(
+        context,
+        representative_index,
+        lambda current, total: _report_representative_progress(
+            progress_callback, representative_index, len(costs), current, total,
+        ),
+    )
+    elapsed_seconds = _representative_elapsed_seconds(
+        context.prepared.blender_plan_paths[representative_index],
+        time.perf_counter() - started_at,
+    )
+    predicted_seconds = predicted_total_seconds(
+        costs, representative_index, elapsed_seconds,
+    )
+    renderer = context.configuration["renderer"]
+    maximum_seconds = int(renderer["maximum_predicted_render_seconds"])
+    override_enabled = bool(renderer.get("allow_runtime_budget_override", False))
+    estimate = {
+        "schema_version": 1,
+        "status": "accepted" if predicted_seconds <= maximum_seconds or override_enabled else "rejected",
+        "representative_gap_index": representative_index,
+        "representative_elapsed_seconds": round(elapsed_seconds, 3),
+        "predicted_total_seconds": predicted_seconds,
+        "maximum_predicted_seconds": maximum_seconds,
+        "override_enabled": override_enabled,
+        "gap_costs": [
+            {
+                "gap_index": item.gap_index,
+                "target_frames": item.target_frames,
+                "detailed_entities": item.detailed_entities,
+                "weak_entities": item.weak_entities,
+                "weight": round(item.weight, 3),
+            }
+            for item in costs
+        ],
+    }
+    write_json_file(
+        context.prepared.work_dir / "storyboard" / "runtime_estimate.json",
+        estimate,
+    )
+    if len(costs) > 1:
+        enforce_runtime_budget(predicted_seconds, maximum_seconds, override_enabled)
+        _require_representative_preview_approval(
+            context, representative_index, representative_path,
+        )
+    _report(
+        progress_callback,
+        "rendering",
+        RENDERING_START + 0.01,
+        f"Projected Blender runtime: {predicted_seconds / 60.0:.1f} minutes; budget accepted",
+    )
+    remaining_indexes = [
+        item.gap_index for item in costs
+        if item.gap_index != representative_index
+    ]
+    rendered_paths = {representative_index: representative_path}
+    rendered_paths.update(_render_blender_gap_indexes(
+        context,
+        progress_callback,
+        remaining_indexes,
+        len(costs),
+        min(worker_count, max(1, len(remaining_indexes))),
+        completed_indexes={representative_index},
+    ))
+    return rendered_paths
+
+
+def _require_representative_preview_approval(
+    context: TimelineRenderContext,
+    representative_index: int,
+    representative_path: Path,
+) -> None:
+    renderer = context.configuration["renderer"]
+    if not renderer.get("interactive_preview_approval", False):
+        return
+    plan_path = context.prepared.blender_plan_paths[representative_index]
+    signature = hashlib.sha256(plan_path.read_bytes()).hexdigest()
+    approval_path = (
+        context.prepared.work_dir
+        / "storyboard"
+        / "representative_preview_approved.json"
+    )
+    if not preview_is_approved(approval_path, signature):
+        raise RepresentativePreviewApprovalRequired(
+            representative_path, approval_path, signature,
+        )
+
+
+def _render_blender_gap_indexes(
+    context: TimelineRenderContext,
+    progress_callback: ProgressCallback | None,
+    gap_indexes: list[int],
+    gap_count: int,
+    worker_count: int,
+    completed_indexes: set[int] | None = None,
+) -> dict[int, Path]:
+    if not gap_indexes:
+        return {}
     progress_tracker = ParallelGapProgress(progress_callback, gap_count, worker_count)
+    for completed_index in completed_indexes or set():
+        progress_tracker.report(completed_index, 1, 1)
     abort_event = threading.Event()
     worker_context = replace(
         context,
@@ -462,11 +596,12 @@ def _render_blender_gaps(
             gap_index,
             lambda current, total, index=gap_index: progress_tracker.report(index, current, total),
         ): gap_index
-        for gap_index in range(gap_count)
+        for gap_index in gap_indexes
     }
     rendered_paths: dict[int, Path] = {}
     try:
-        for completed_count, future in enumerate(as_completed(futures), start=1):
+        already_completed = len(completed_indexes or set())
+        for completed_count, future in enumerate(as_completed(futures), start=already_completed + 1):
             gap_index = futures[future]
             try:
                 rendered_paths[gap_index] = future.result()
@@ -482,6 +617,46 @@ def _render_blender_gaps(
     return rendered_paths
 
 
+def _read_blender_plans(plan_paths: list[Path]) -> list[dict]:
+    plans = [read_json_file(path) for path in plan_paths]
+    if not all(isinstance(plan, dict) for plan in plans):
+        raise ValueError("A Blender reconstruction plan is missing or invalid")
+    return [plan for plan in plans if isinstance(plan, dict)]
+
+
+def _representative_elapsed_seconds(plan_path: Path, wall_seconds: float) -> float:
+    report = read_json_file(plan_path.parent / "render_report.json")
+    reported_seconds = (
+        float(report.get("elapsed_seconds", 0.0))
+        if isinstance(report, dict)
+        else 0.0
+    )
+    return max(0.001, wall_seconds, reported_seconds)
+
+
+def _runtime_budget_enabled(configuration: dict) -> bool:
+    return bool(
+        configuration.get("renderer", {}).get("runtime_budget_enabled", False)
+    )
+
+
+def _report_representative_progress(
+    callback: ProgressCallback | None,
+    gap_index: int,
+    gap_count: int,
+    current_frame: int,
+    total_frames: int,
+) -> None:
+    fraction = current_frame / max(1, total_frames)
+    progress = RENDERING_START + RENDERING_SPAN * BLENDER_RENDER_PROGRESS_SHARE * fraction / gap_count
+    _report(
+        callback,
+        "rendering",
+        progress,
+        f"Benchmarking gap {gap_index + 1} of {gap_count}: frame {current_frame} of {total_frames}",
+    )
+
+
 def _combined_cancellation_check(
     external_check: CancellationCheck | None,
     abort_event: threading.Event,
@@ -490,9 +665,14 @@ def _combined_cancellation_check(
 
 
 def _parallel_gap_renderer_count(configuration: dict, gap_count: int) -> int:
+    renderer = configuration.get("renderer", {})
     configured_count = int(
-        configuration.get("renderer", {}).get("max_parallel_gap_renders", DEFAULT_PARALLEL_GAP_RENDERERS)
+        renderer.get("max_parallel_gap_renders", DEFAULT_PARALLEL_GAP_RENDERERS)
     )
+    if renderer.get("engine") == "CYCLES":
+        configured_count = min(
+            configured_count, int(renderer.get("maximum_gpu_workers", 1)),
+        )
     return max(1, min(configured_count, max(1, gap_count)))
 
 
@@ -605,7 +785,7 @@ def _prepare_reconstruction(
             scene_report,
             blender_plan_paths,
             work_dir,
-            config["reasoning"],
+            {**config["reasoning"], "renderer": config.get("renderer", {})},
             options.reuse_work,
             options.cancellation_check,
         )

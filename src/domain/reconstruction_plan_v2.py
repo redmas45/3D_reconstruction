@@ -143,6 +143,9 @@ def _render_contract(render_configuration: dict | None, video: dict) -> dict:
         "production_scale_percent": int(configured.get(
             "production_scale_percent", DEFAULT_RENDER_CONFIGURATION["production_scale_percent"]
         )),
+        "target_fps": int(configured.get("target_fps", 10)),
+        "checkpoint_frame_batch": int(configured.get("checkpoint_frame_batch", 24)),
+        "diagnostic_pose_count": int(configured.get("diagnostic_pose_count", 5)),
         "source_width": int(video["width"]),
         "source_height": int(video["height"]),
     }
@@ -298,6 +301,12 @@ def _validate_render_contract(value: object) -> None:
     for field_name in integer_fields:
         field_value = value.get(field_name)
         if isinstance(field_value, bool) or not isinstance(field_value, int) or field_value <= 0:
+            raise PlanValidationError(f"Render {field_name} must be a positive integer")
+    for field_name in ("target_fps", "checkpoint_frame_batch"):
+        field_value = value.get(field_name)
+        if field_value is not None and (
+            isinstance(field_value, bool) or not isinstance(field_value, int) or field_value <= 0
+        ):
             raise PlanValidationError(f"Render {field_name} must be a positive integer")
     if value["engine"] != "CYCLES":
         return

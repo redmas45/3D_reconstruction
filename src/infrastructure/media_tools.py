@@ -88,6 +88,40 @@ def encode_with_source_audio(
     return output_path
 
 
+def encode_png_sequence(
+    frame_directory: Path,
+    rendered_fps: float,
+    source_contract: VideoContract,
+    output_path: Path,
+    cancellation_check: CancellationCheck | None = None,
+) -> Path:
+    if rendered_fps <= 0 or source_contract.fps <= 0 or source_contract.frame_count < 1:
+        raise ValueError("Frame-sequence timing contract is invalid")
+    first_frame = frame_directory / "frame_000001.png"
+    if not first_frame.is_file():
+        raise MediaProcessingError("Sparse render contains no completed PNG frames")
+    ffmpeg_path = find_media_tool("ffmpeg")
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    command = [
+        str(ffmpeg_path), "-y",
+        "-framerate", f"{rendered_fps:.9f}",
+        "-start_number", "1",
+        "-i", str(frame_directory / "frame_%06d.png"),
+        "-vf", f"tpad=stop_mode=clone:stop_duration=1,fps={source_contract.fps:.9f}:round=near",
+        "-frames:v", str(source_contract.frame_count),
+        "-c:v", "libx264",
+        "-preset", "medium",
+        "-crf", "18",
+        "-pix_fmt", "yuv420p",
+        "-an",
+        "-movflags", "+faststart",
+        str(output_path),
+    ]
+    _run_media_command(command, output_path.parent / "ffmpeg_sparse_normalize.log", cancellation_check)
+    validate_video_contract(output_path, source_contract)
+    return output_path
+
+
 def inspect_video_contract(video_path: Path) -> VideoContract:
     capture = cv2.VideoCapture(str(video_path))
     if not capture.isOpened():

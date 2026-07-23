@@ -101,9 +101,18 @@
   },
   "reasoning": {
     "enabled": true,
+    "planner_schema_version": 2,
     "request_timeout_seconds": 120,
     "max_output_tokens": 8000,
-    "reasoning_effort": "medium"
+    "reasoning_effort": "medium",
+    "maximum_gaps_per_batch": 4,
+    "maximum_images_per_batch": 12,
+    "image_detail": "low",
+    "images": {
+      "max_global_keyframes": 8,
+      "boundary_frames_per_side": 2,
+      "crops_per_track": 2
+    }
   },
   "visualization": {
     "visible_box_thickness": 2,
@@ -121,8 +130,22 @@
   "renderer": {
     "default_mode": "blender",
     "blender_version": "4.5 LTS",
-    "preview_scale_percent": 75,
-    "production_scale_percent": 100,
+    "default_profile": "standard_forensic",
+    "preview_scale_percent": 50,
+    "production_scale_percent": 45,
+    "target_fps": 8,
+    "scale_percent": 45,
+    "cycles_samples": 2,
+    "maximum_detailed_entities": 6,
+    "maximum_gpu_workers": 1,
+    "maximum_cpu_workers": 2,
+    "checkpoint_frame_batch": 24,
+    "diagnostic_pose_count": 5,
+    "requires_preview_approval": true,
+    "interactive_preview_approval": false,
+    "runtime_budget_enabled": true,
+    "maximum_predicted_render_seconds": 2700,
+    "allow_runtime_budget_override": false,
     "max_parallel_gap_renders": 3,
     "gap_render_stall_timeout_seconds": 7200
   }

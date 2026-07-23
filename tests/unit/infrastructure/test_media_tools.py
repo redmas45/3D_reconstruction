@@ -14,6 +14,7 @@ from infrastructure.media_tools import (
     MediaProcessingError,
     VideoContract,
     _wait_for_media_process,
+    encode_png_sequence,
     encode_with_source_audio,
     validate_constant_frame_rate,
 )
@@ -77,6 +78,31 @@ class MediaToolsTests(unittest.TestCase):
             self.assertNotIn("-shortest", captured_command)
             duration_index = captured_command.index("-t") + 1
             self.assertEqual("10.000000000", captured_command[duration_index])
+
+    def test_sparse_sequence_is_padded_and_normalized_to_exact_source_contract(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            frame_directory = root / "frames"
+            frame_directory.mkdir()
+            (frame_directory / "frame_000001.png").write_bytes(b"png")
+            output_path = root / "normalized.mp4"
+            captured_command: list[str] = []
+
+            def run_command(command: list[str], log_path: Path, cancellation_check: object) -> None:
+                del log_path, cancellation_check
+                captured_command.extend(command)
+                output_path.write_bytes(b"normalized")
+
+            expected = VideoContract(640, 360, 29.97, 31)
+            with patch("infrastructure.media_tools.find_media_tool", return_value=Path("ffmpeg")):
+                with patch("infrastructure.media_tools._run_media_command", side_effect=run_command):
+                    with patch("infrastructure.media_tools.validate_video_contract", return_value=expected):
+                        encode_png_sequence(frame_directory, 10.0, expected, output_path)
+
+            filter_value = captured_command[captured_command.index("-vf") + 1]
+            self.assertIn("tpad=stop_mode=clone", filter_value)
+            self.assertIn("fps=29.970000000", filter_value)
+            self.assertEqual("31", captured_command[captured_command.index("-frames:v") + 1])
 
 
 if __name__ == "__main__":

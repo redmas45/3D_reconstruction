@@ -9,6 +9,13 @@ from frame_rate import blender_frame_rate
 from hud import build_hud
 from human_builder import build_human
 from render_device import CYCLES_RENDER_ENGINE, configure_cycles_render
+from render_passes import (
+    ACTOR_PASS_INDEX,
+    ENVIRONMENT_PASS_INDEX,
+    HUD_PASS_INDEX,
+    UNCERTAINTY_PASS_INDEX,
+    assign_pass_index,
+)
 from vehicle_builder import build_vehicle
 
 
@@ -23,14 +30,26 @@ def build_scene(plan: dict) -> bpy.types.Scene:
     configure_render(scene, plan)
     camera = build_camera(plan["camera"])
     build_lighting()
+    objects_before_environment = set(scene.objects)
     build_environment(plan)
+    assign_pass_index(set(scene.objects) - objects_before_environment, ENVIRONMENT_PASS_INDEX)
     show_debug_paths = plan["environment"].get("show_debug_paths", False)
     for entity in plan["entities"]:
+        objects_before_entity = set(scene.objects)
         parts = build_human(entity) if entity["kind"] in RENDERABLE_HUMANS else build_vehicle(entity)
         animate_entity(parts, entity, plan["frame_count"])
         if show_debug_paths:
             build_path_trail(entity)
+        entity_objects = set(scene.objects) - objects_before_entity
+        uncertainty_objects = {
+            scene_object for scene_object in entity_objects
+            if scene_object.name.startswith(("Confidence_", "Path_"))
+        }
+        assign_pass_index(entity_objects - uncertainty_objects, ACTOR_PASS_INDEX)
+        assign_pass_index(uncertainty_objects, UNCERTAINTY_PASS_INDEX)
+    objects_before_hud = set(scene.objects)
     build_hud(plan, camera)
+    assign_pass_index(set(scene.objects) - objects_before_hud, HUD_PASS_INDEX)
     scene.frame_start = 1
     scene.frame_end = plan["frame_count"]
     return scene

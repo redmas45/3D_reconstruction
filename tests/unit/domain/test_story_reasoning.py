@@ -45,6 +45,40 @@ class StoryReasoningTests(unittest.TestCase):
                 malformed, "evidence-digest", self.clues, self.hypotheses,
             )
 
+    def test_decision_rebuilds_references_from_valid_clue_identifiers(self) -> None:
+        malformed = copy.deepcopy(self.decisions)
+        malformed["decisions"][0]["evidence_references"] = ["hidden:frame:15"]
+
+        validated = validate_gap_decisions(
+            malformed, "evidence-digest", self.clues, self.hypotheses,
+        )
+
+        self.assertEqual(
+            self.decisions["decisions"][0]["evidence_references"],
+            validated["decisions"][0]["evidence_references"],
+        )
+        self.assertNotIn("hidden:frame:15", validated["decisions"][0]["evidence_references"])
+
+    def test_fallback_bounds_scene_wide_evidence_references(self) -> None:
+        large_catalog = copy.deepcopy(self.clues)
+        scene_tracks = next(
+            item for item in large_catalog["clues"] if item["id"] == "scene_tracks"
+        )
+        scene_tracks["evidence_references"] = [
+            f"track:person_{index}:visible_observations" for index in range(100)
+        ]
+        decisions = build_deterministic_gap_decisions(
+            "evidence-digest", large_catalog, self.hypotheses, "test fallback",
+        )
+
+        validated = validate_gap_decisions(
+            decisions, "evidence-digest", large_catalog, self.hypotheses,
+        )
+
+        references = validated["decisions"][0]["evidence_references"]
+        self.assertEqual(32, len(references))
+        self.assertEqual("gap:0:camera_calibration", references[0])
+
     def test_validated_decision_compiles_plan_storyboard_and_narrative(self) -> None:
         validated = validate_gap_decisions(
             self.decisions, "evidence-digest", self.clues, self.hypotheses,

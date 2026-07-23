@@ -11,6 +11,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
 from application.evidence_reasoning import reason_about_reconstruction
+from domain.gap_decisions import GapDecisionValidationError
 from domain.reconstruction_plan_v2 import build_reconstruction_plan_v2, write_reconstruction_plan_v2
 
 
@@ -44,6 +45,42 @@ class EvidenceReasoningApplicationTests(unittest.TestCase):
             self.assertIn("reasoning_decision", updated_plan)
             self.assertTrue((work_directory / "evidence_ledger.json").is_file())
             self.assertTrue((work_directory / "decision_trace.json").is_file())
+
+    def test_invalid_azure_decisions_complete_with_deterministic_fallback(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            work_directory = Path(temporary_directory)
+            plan_path = work_directory / "gaps" / "gap_00" / "blender" / "plan_v2.json"
+            scene_report, identity_registry = _evidence_fixtures()
+            plan = build_reconstruction_plan_v2(
+                scene_report,
+                identity_registry,
+                hidden_range=(10, 20),
+                gap_index=0,
+            )
+            write_reconstruction_plan_v2(plan, plan_path)
+            azure_environment = {
+                "AZURE_OPENAI_BASE_URL": "https://example.openai.azure.com",
+                "AZURE_OPENAI_API_KEY": "test-api-key",
+                "AZURE_OPENAI_CHAT_DEPLOYMENT": "test-deployment",
+            }
+
+            with (
+                patch.dict(os.environ, azure_environment, clear=True),
+                patch(
+                    "application.evidence_reasoning._request_decision_batches",
+                    side_effect=GapDecisionValidationError("invalid Azure decision"),
+                ),
+            ):
+                result = reason_about_reconstruction(
+                    scene_report,
+                    [plan_path],
+                    work_directory,
+                    {"enabled": True},
+                    reuse_work=False,
+                )
+
+            self.assertEqual("deterministic_fallback", result.mode)
+            self.assertTrue((work_directory / "reasoning_public.json").is_file())
 
 
 def _evidence_fixtures() -> tuple[dict, dict]:

@@ -226,12 +226,8 @@ def _validate_gap_decision(value: object, gaps: dict[int, dict], clues: dict[str
     clue_ids = _validated_identifier_list(value.get("clue_ids"), "clue IDs")
     if not set(clue_ids).issubset(clues):
         raise GapDecisionValidationError("Decision references an unknown clue")
-    references = _validated_identifier_list(value.get("evidence_references"), "evidence references")
-    allowed_references = {
-        reference for clue_id in clue_ids for reference in clues[clue_id]["evidence_references"]
-    }
-    if not set(references).issubset(allowed_references):
-        raise GapDecisionValidationError("Decision references evidence outside the clue catalog")
+    _validated_identifier_list(value.get("evidence_references"), "evidence references")
+    references = _canonical_evidence_references(clue_ids, clues)
     entities = _validate_entities(value.get("entities"), gaps[gap_index])
     beats = _validate_beats(value.get("event_beats"), {item["entity_id"] for item in entities})
     return {
@@ -348,15 +344,31 @@ def _hypotheses_by_gap_and_entity(library: dict) -> dict[int, dict[str, dict[str
 def _gap_clue_ids(gap_index: int, catalog: dict) -> list[str]:
     prefix = f"gap:{gap_index}"
     scene_ids = [item["id"] for item in catalog["clues"] if item["scope"] == "scene"]
-    gap_ids = [item["id"] for item in catalog["clues"] if str(item["scope"]).startswith(prefix)]
-    return scene_ids + gap_ids
+    gap_ids = [
+        item["id"]
+        for item in catalog["clues"]
+        if item["scope"] == prefix or str(item["scope"]).startswith(f"{prefix}:")
+    ]
+    return _bounded_unique(gap_ids + scene_ids)
 
 
 def _evidence_references(clue_ids: list[str], catalog: dict) -> list[str]:
     selected = {item["id"]: item for item in catalog["clues"]}
-    return list(dict.fromkeys(
-        reference for clue_id in clue_ids for reference in selected[clue_id]["evidence_references"]
-    ))
+    return _canonical_evidence_references(clue_ids, selected)
+
+
+def _canonical_evidence_references(
+    clue_ids: list[str],
+    clues: dict[str, dict],
+) -> list[str]:
+    references = [
+        reference for clue_id in clue_ids for reference in clues[clue_id]["evidence_references"]
+    ]
+    return _bounded_unique(references)
+
+
+def _bounded_unique(values: list[str]) -> list[str]:
+    return list(dict.fromkeys(values))[:MAXIMUM_LIST_ITEMS]
 
 
 def _validated_identifier_list(value: object, field_name: str) -> list[str]:

@@ -3,8 +3,12 @@ from pathlib import Path
 from infrastructure.json_files import read_json_file, write_json_file
 
 
-PRESENTATION_SCHEMA_VERSION = 1
+PRESENTATION_SCHEMA_VERSION = 2
 MAXIMUM_PRESENTED_CLUES = 8
+MAXIMUM_PRESENTED_GAP_CLUES = 6
+MAXIMUM_PRESENTED_ENTITIES_PER_GAP = 12
+MAXIMUM_PRESENTED_REJECTIONS_PER_ENTITY = 4
+MAXIMUM_PRESENTED_EVIDENCE_REFERENCES = 8
 PUBLIC_REASONING_FILENAME = "reasoning_public.json"
 
 
@@ -87,13 +91,18 @@ def _presentation_gaps(
         for item in reasoning.get("gap_summaries", [])
         if isinstance(item, dict) and isinstance(item.get("gap_index"), int)
     }
+    clues = {
+        str(item["id"]): item
+        for item in reasoning.get("clues", [])
+        if isinstance(item, dict) and isinstance(item.get("id"), str)
+    }
     decisions = {
         int(item["gap_index"]): item
         for item in reasoning.get("decisions", [])
         if isinstance(item, dict) and isinstance(item.get("gap_index"), int)
     }
     return [
-        _gap_contract(index, hidden_range, fps, summaries, decisions, plans)
+        _gap_contract(index, hidden_range, fps, summaries, decisions, clues, plans)
         for index, hidden_range in enumerate(hidden_ranges)
     ]
 
@@ -104,6 +113,7 @@ def _gap_contract(
     fps: float,
     summaries: dict[int, dict],
     decisions: dict[int, dict],
+    clues: dict[str, dict],
     plans: dict[int, dict],
 ) -> dict:
     start_frame, end_frame = int(hidden_range[0]), int(hidden_range[1])
@@ -128,6 +138,12 @@ def _gap_contract(
         "after_observed": str(summary.get("after_observed", "Visible evidence after the gap.")),
         "unknowns": _text_items(summary.get("unknowns", decision.get("unknowns", []))),
         "clue_ids": _text_items(decision.get("clue_ids", [])),
+        "evidence_references": _text_items(
+            decision.get("evidence_references", []),
+        )[:MAXIMUM_PRESENTED_EVIDENCE_REFERENCES],
+        "clues": _gap_clues(decision, clues),
+        "entities": _entity_decisions(decision),
+        "event_beats": _event_beats(decision),
         "entity_count": len(plan.get("entities", [])),
         "calibration_confidence": round(
             float(plan.get("camera", {}).get("calibration_confidence", 0.0)), 4,
@@ -144,6 +160,10 @@ def _story_contract(reasoning: dict, scene_report: dict) -> dict:
         "summary": str(reasoning.get("whole_video_summary", fallback_summary)),
         "confidence": round(float(reasoning.get("confidence", 0.0)), 4),
         "causal_link_supported": bool(reasoning.get("causal_link_supported", False)),
+        "planning_mode": str(reasoning.get("mode", "unknown")),
+        "deployment": str(reasoning.get("deployment") or "deterministic fallback"),
+        "warning": str(reasoning.get("warning") or ""),
+        "unknowns": _text_items(reasoning.get("unknowns", [])),
         "points": [
             str(item["statement"])
             for item in reasoning.get("story_points", [])
@@ -184,6 +204,65 @@ def _render_contract(renderer_mode: str, plans: dict[int, dict]) -> dict:
         "hybrid_static_backplate": bool(environment.get("hybrid_backplate_enabled", False)),
         "production_hud_mode": str(render.get("production_hud_mode", "minimal")),
     }
+
+
+def _gap_clues(decision: dict, clues: dict[str, dict]) -> list[dict]:
+    presented = []
+    for clue_id in _text_items(decision.get("clue_ids", [])):
+        clue = clues.get(clue_id)
+        if clue is None:
+            continue
+        presented.append({
+            "id": clue_id,
+            "statement": str(clue.get("statement", "Visible evidence clue")),
+            "confidence": round(float(clue.get("confidence", 0.0)), 4),
+        })
+    return presented[:MAXIMUM_PRESENTED_GAP_CLUES]
+
+
+def _entity_decisions(decision: dict) -> list[dict]:
+    entities = decision.get("entities", [])
+    if not isinstance(entities, list):
+        return []
+    return [
+        _entity_decision(item)
+        for item in entities[:MAXIMUM_PRESENTED_ENTITIES_PER_GAP]
+        if isinstance(item, dict)
+    ]
+
+
+def _entity_decision(entity: dict) -> dict:
+    rejected = entity.get("rejected_hypotheses", [])
+    rejected_items = rejected if isinstance(rejected, list) else []
+    return {
+        "entity_id": str(entity.get("entity_id", "entity")),
+        "selected_hypothesis_id": str(entity.get("selected_hypothesis_id", "unknown")),
+        "decision_summary": str(entity.get("decision_summary", "Bounded hypothesis selected.")),
+        "confidence": round(float(entity.get("confidence", 0.0)), 4),
+        "rejected_hypotheses": [
+            {
+                "id": str(item.get("id", "alternative")),
+                "reason": str(item.get("reason", "Less supported by visible evidence.")),
+            }
+            for item in rejected_items[:MAXIMUM_PRESENTED_REJECTIONS_PER_ENTITY]
+            if isinstance(item, dict)
+        ],
+    }
+
+
+def _event_beats(decision: dict) -> list[dict]:
+    beats = decision.get("event_beats", [])
+    if not isinstance(beats, list):
+        return []
+    return [
+        {
+            "time_fraction": round(float(item.get("time_fraction", 0.0)), 4),
+            "action": str(item.get("action", "continue")),
+            "entity_ids": _text_items(item.get("entity_ids", [])),
+        }
+        for item in beats
+        if isinstance(item, dict)
+    ]
 
 
 def _text_items(value: object) -> list[str]:

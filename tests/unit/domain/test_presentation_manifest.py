@@ -40,6 +40,16 @@ class PresentationManifestTests(unittest.TestCase):
         self.assertEqual(10.0, manifest["gaps"][0]["start_seconds"])
         self.assertEqual(6.0, manifest["gaps"][0]["duration_seconds"])
         self.assertEqual("Strong visible clue", manifest["top_clues"][0]["statement"])
+        self.assertEqual("clue_1", manifest["gaps"][0]["clues"][0]["id"])
+        self.assertEqual(
+            ["track:person_1:visible_observations"],
+            manifest["gaps"][0]["evidence_references"],
+        )
+        self.assertEqual(
+            "continue_measured_motion",
+            manifest["gaps"][0]["entities"][0]["selected_hypothesis_id"],
+        )
+        self.assertEqual("azure", manifest["story"]["planning_mode"])
         self.assertNotIn("truth_path", json.dumps(manifest).lower())
 
 
@@ -49,6 +59,8 @@ def _write_reasoning(work_directory: Path) -> None:
         "whole_video_summary": "Visible evidence supports bounded continuation.",
         "confidence": 0.8,
         "causal_link_supported": False,
+        "mode": "azure",
+        "deployment": "gpt-5.4-mini",
         "story_points": [{"statement": "A person moves right."}],
         "clues": [
             {
@@ -71,7 +83,23 @@ def _write_reasoning(work_directory: Path) -> None:
             "gap_summary": "Continue right.",
             "confidence": 0.8,
             "clue_ids": ["clue_1"],
+            "evidence_references": ["track:person_1:visible_observations"],
             "unknowns": ["Exact pose"],
+            "entities": [{
+                "entity_id": "person_1",
+                "selected_hypothesis_id": "continue_measured_motion",
+                "decision_summary": "Measured motion is consistent across the gap.",
+                "confidence": 0.85,
+                "rejected_hypotheses": [{
+                    "id": "hold_position",
+                    "reason": "Visible velocity supports continued movement.",
+                }],
+            }],
+            "event_beats": [{
+                "time_fraction": 0.0,
+                "action": "continue",
+                "entity_ids": ["person_1"],
+            }],
         }],
     }
     (work_directory / "reasoning_public.json").write_text(

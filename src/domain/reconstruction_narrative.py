@@ -4,6 +4,12 @@
 NARRATIVE_SCHEMA_VERSION = 1
 MAXIMUM_TEXT_LENGTH = 700
 MAXIMUM_LIST_ITEMS = 50
+MULTI_GAP_SUMMARY_TEMPLATE = (
+    "Across {gap_count} missing intervals, visible boundary evidence supports bounded motion "
+    "continuations selected from the supplied hypotheses. These interval reconstructions are "
+    "inferences rather than recovered ground truth; the per-gap evidence, confidence, and "
+    "remaining unknowns are listed separately."
+)
 
 
 class NarrativeValidationError(ValueError):
@@ -137,7 +143,9 @@ def narrative_request_payload(clue_catalog: dict, gap_decisions: dict) -> dict:
 def _whole_video_summary(summaries: list[str]) -> str:
     if not summaries:
         return "The visible evidence did not support a specific missing-interval reconstruction."
-    return " ".join(summaries)
+    if len(summaries) == 1:
+        return summaries[0]
+    return MULTI_GAP_SUMMARY_TEMPLATE.format(gap_count=len(summaries))
 
 
 def _story_points(decisions: list[dict]) -> list[dict]:

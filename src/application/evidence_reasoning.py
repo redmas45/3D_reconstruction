@@ -47,6 +47,7 @@ REASONING_PROMPT_VERSION = "visible-story-planner-v2"
 PUBLIC_REASONING_FILENAME = "reasoning_public.json"
 DEFAULT_MAXIMUM_GAPS_PER_BATCH = 4
 DEFAULT_MAXIMUM_IMAGES_PER_BATCH = 12
+DIGEST_FIELDS = ("evidence_digest", "clue_digest", "hypothesis_digest")
 
 
 @dataclass(frozen=True)
@@ -164,7 +165,7 @@ def _request_decision_batches(
         raise_if_cancelled(cancellation_check)
         payload, image_paths = _batch_payload(artifacts, indexes, configuration)
         response, metadata = request_gap_decisions(
-            settings, payload, gap_decisions_json_schema(), image_paths,
+            settings, payload, _decision_batch_schema(payload), image_paths,
             str(configuration.get("image_detail", "low")),
         )
         _validate_batch_digests(response, artifacts)
@@ -231,7 +232,9 @@ def _select_narrative(
     raise_if_cancelled(cancellation_check)
     try:
         response, metadata = request_reconstruction_narrative(
-            settings, narrative_request_payload(clues, decisions), narrative_json_schema(),
+            settings,
+            narrative_request_payload(clues, decisions),
+            _narrative_schema(clues, mode),
         )
         return validate_narrative(response, clues, decisions, mode), metadata
     except (AzureReasoningRequestError, AzureReasoningResponseError, NarrativeValidationError):
@@ -426,6 +429,29 @@ def _validate_batch_digests(response: dict, artifacts: dict) -> None:
     }
     if any(response.get(field) != value for field, value in expected.items()):
         raise GapDecisionValidationError("Azure batch response does not match supplied evidence")
+
+
+def _decision_batch_schema(payload: dict) -> dict:
+    schema = gap_decisions_json_schema()
+    for field in DIGEST_FIELDS:
+        schema["properties"][field] = {
+            "type": "string",
+            "enum": [str(payload[field])],
+        }
+    return schema
+
+
+def _narrative_schema(clues: dict, mode: str) -> dict:
+    schema = narrative_json_schema()
+    schema["properties"]["clue_digest"] = {
+        "type": "string",
+        "enum": [str(clues["clue_digest"])],
+    }
+    schema["properties"]["mode"] = {
+        "type": "string",
+        "enum": [mode],
+    }
+    return schema
 
 
 def _combined_decisions(artifacts: dict, decisions: list[dict]) -> dict:

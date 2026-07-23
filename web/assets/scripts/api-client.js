@@ -20,6 +20,7 @@ const UPLOAD_TIMEOUT_MILLISECONDS = 300_000;
  * @property {string[]} clue_ids
  * @property {number} confidence
  * @property {string[]} unknowns
+ * @property {string[]} evidence_references
  * @property {ReasoningEntityDecision[]} entities
  */
 
@@ -62,6 +63,11 @@ const UPLOAD_TIMEOUT_MILLISECONDS = 300_000;
  * @property {string} inside_inferred
  * @property {string} after_observed
  * @property {string[]} unknowns
+ * @property {{id:string, statement:string, confidence:number}[]} clues
+ * @property {ReasoningEntityDecision[]} entities
+ * @property {{time_fraction:number, action:string, entity_ids:string[]}[]} event_beats
+ * @property {number} entity_count
+ * @property {number} calibration_confidence
  */
 
 /**
@@ -70,10 +76,10 @@ const UPLOAD_TIMEOUT_MILLISECONDS = 300_000;
  * @property {string} title
  * @property {string} disclosure
  * @property {{duration_seconds:number, observed_fraction:number}} source
- * @property {{headline:string, summary:string, confidence:number, causal_link_supported:boolean, points:string[]}} story
+ * @property {{headline:string, summary:string, confidence:number, causal_link_supported:boolean, planning_mode:string, deployment:string, warning:string, unknowns:string[], points:string[]}} story
  * @property {{id:string, category:string, statement:string, confidence:number}[]} top_clues
  * @property {PresentationGap[]} gaps
- * @property {{mode:string, engine:string, target_fps:number, hybrid_static_backplate:boolean}} render
+ * @property {{mode:string, engine:string, target_fps:number, hybrid_static_backplate:boolean, production_hud_mode:string}} render
  */
 
 /**

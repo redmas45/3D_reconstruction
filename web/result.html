@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>3D Reconstruction — Judge Result</title>
+  <title>3D Reconstruction — Evidence Review</title>
   <link rel="stylesheet" href="/assets/styles/result.css">
   <script src="/assets/scripts/result-view.js" type="module"></script>
 </head>
@@ -12,7 +12,7 @@
     <header>
       <div>
         <span class="eyebrow">AI-INFERRED EVIDENCE VISUALIZATION</span>
-        <h1>Reconstruction result</h1>
+        <h1>Evidence reconstruction review</h1>
       </div>
       <span class="result-status">Complete</span>
     </header>
@@ -21,7 +21,7 @@
         <video id="result-video" controls preload="metadata" src="/api/video"></video>
       </div>
       <div id="marker-root"></div>
-      <p>Compressed judge preview. The full-quality video and reports are saved in Google Drive.</p>
+      <p>Use the cyan timeline markers to jump directly to reconstructed intervals. Full-quality artifacts remain saved in Google Drive.</p>
     </section>
     <section id="presentation-root" aria-live="polite">
       <p class="loading">Loading the evidence story and gap review…</p>

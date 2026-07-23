@@ -10,12 +10,40 @@ from unittest.mock import patch
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
-from application.evidence_reasoning import reason_about_reconstruction
+from application.evidence_reasoning import (
+    _decision_batch_schema,
+    _narrative_schema,
+    reason_about_reconstruction,
+)
 from domain.gap_decisions import GapDecisionValidationError
 from domain.reconstruction_plan_v2 import build_reconstruction_plan_v2, write_reconstruction_plan_v2
 
 
 class EvidenceReasoningApplicationTests(unittest.TestCase):
+    def test_azure_schemas_pin_immutable_evidence_context(self) -> None:
+        payload = {
+            "evidence_digest": "evidence",
+            "clue_digest": "clues",
+            "hypothesis_digest": "hypotheses",
+        }
+
+        decision_schema = _decision_batch_schema(payload)
+        narrative_schema = _narrative_schema({"clue_digest": "clues"}, "azure")
+
+        self.assertEqual(
+            ["evidence"], decision_schema["properties"]["evidence_digest"]["enum"],
+        )
+        self.assertEqual(
+            ["clues"], decision_schema["properties"]["clue_digest"]["enum"],
+        )
+        self.assertEqual(
+            ["hypotheses"], decision_schema["properties"]["hypothesis_digest"]["enum"],
+        )
+        self.assertEqual(
+            ["clues"], narrative_schema["properties"]["clue_digest"]["enum"],
+        )
+        self.assertEqual(["azure"], narrative_schema["properties"]["mode"]["enum"])
+
     def test_unconfigured_azure_writes_explicit_fallback_artifacts_and_plan(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             work_directory = Path(temporary_directory)

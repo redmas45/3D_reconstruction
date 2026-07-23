@@ -15,7 +15,11 @@ from domain.gap_decisions import (
     validate_gap_decisions,
 )
 from domain.gap_hypotheses import build_gap_hypotheses
-from domain.reconstruction_narrative import build_deterministic_narrative, validate_narrative
+from domain.reconstruction_narrative import (
+    MAXIMUM_TEXT_LENGTH,
+    build_deterministic_narrative,
+    validate_narrative,
+)
 from domain.render_storyboard import compile_render_storyboard
 
 
@@ -117,6 +121,28 @@ class StoryReasoningTests(unittest.TestCase):
             self.scene, [plan], self.hypotheses, validated, {"target_fps": 10},
         )
         self.assertEqual(first["storyboard_digest"], second["storyboard_digest"])
+
+    def test_multi_gap_fallback_narrative_stays_within_schema_limit(self) -> None:
+        decisions = copy.deepcopy(self.decisions)
+        template = decisions["decisions"][0]
+        decisions["decisions"] = [
+            {
+                **copy.deepcopy(template),
+                "gap_index": gap_index,
+                "gap_summary": f"Gap {gap_index}: " + ("bounded visible evidence. " * 15),
+            }
+            for gap_index in range(7)
+        ]
+
+        narrative = build_deterministic_narrative(
+            self.clues, decisions, "deterministic_fallback", "Azure response was invalid.",
+        )
+        validated = validate_narrative(
+            narrative, self.clues, decisions, "deterministic_fallback",
+        )
+
+        self.assertLessEqual(len(validated["whole_video_summary"]), MAXIMUM_TEXT_LENGTH)
+        self.assertIn("Across 7 missing intervals", validated["whole_video_summary"])
 
 
 def _scene_fixture() -> dict:

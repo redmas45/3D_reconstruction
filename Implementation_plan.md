@@ -15,7 +15,7 @@ This is the approved, living implementation plan for the AI evidence-gap reconst
 - Resume state is content-addressed by source SHA-256. Selection and detection JSON use atomic replacement and malformed-cache recovery; Blender reuse verifies the plan/report contract and the physical MP4 contract before accepting a completed gap.
 - The local service is single-instance and loopback-only, validates request hosts, bounds request/upload stalls, persists clean public errors, supports cancellation, and closes active browser connections during shutdown.
 - The supported profile is currently constant-frame-rate, static-camera footage with people or road vehicles visible near gap boundaries. Moving-camera footage is experimental because motion is measured but not applied to the Blender camera; arbitrary indoor/general-scene reconstruction is not claimed as flawless.
-- Evidence/story Gates A–C are implemented for Blender jobs: deterministic clue IDs, a hidden-frame-safe keyframe/crop manifest, per-entity hypotheses, batched multimodal Azure gap decisions, strict local validation, deterministic fallback, a presentation-only whole-video narrative, renderer-only storyboard compilation, render budgets, and the UI story/gap timeline are present. The configured deployment is read from `AZURE_OPENAI_CHAT_DEPLOYMENT`; a live paid end-to-end request and visual comparison remain validation gates.
+- Evidence/story Gates A–C are implemented for Blender jobs: deterministic clue IDs, a hidden-frame-safe keyframe/crop manifest, per-entity hypotheses, batched multimodal Azure gap decisions, strict local validation, deterministic fallback, a presentation-only whole-video narrative, renderer-only storyboard compilation, render budgets, and the UI story/gap timeline are present. The configured deployment is read from `AZURE_OPENAI_CHAT_DEPLOYMENT`; deployment discovery and the minimal live structured-output probe now pass against `gpt-5.4-mini`. Full-video Azure decisions and visual comparison remain validation gates.
 - The Colab T4 successfully completed a real Blender Cycles OptiX probe in 4.544 seconds, proving GPU access. A subsequent production run reached the Colab T4 session limit after roughly 3–4 hours, proving that the current source-FPS, 75%-scale, 16-sample profile is not a viable full-video default.
 - Smart-renderer Gate D is substantially implemented: the default profile renders an 8 fps, 45%-scale, two-sample composite sequence (Colab: 6 fps at 40%) with atomic SHA-256 frame manifests, skips valid frames after interruption, and restores exact source timing. Bounded environment, actor, uncertainty, HUD, depth, and shadow diagnostics are extracted at review poses from the same render. The heaviest gap runs first, predicts total time, writes `runtime_estimate.json`, refuses projections over 45 minutes without override, and in Colab requires explicit visual approval before remaining gaps start. Reusable scene-shell instancing and full-frame layer manifests remain future optimization.
 - Phase 4 (three representative gaps), Phase 5 (full one-video render), Phase 6 judge polish, and Phase 7 second-video validation remain approval gates.
@@ -25,7 +25,7 @@ Historical render artifacts (useful for timing/container inspection, but generat
 - `outputs/blender_preview_input_vid3/gap_00/`: original-video gap-0 midpoint, animation, plan, `.blend`, report, log, and contact sheet.
 - `outputs/e2e_blender_smoke/`: 150-frame UI-pipeline smoke result with one 38-frame Blender gap, H.264 video, AAC audio, and exact 1280×720 / 29.970029 fps contract.
 - Eevee production timing on this CPU: final 57-frame gap with transitions in 560.489 seconds; 38-frame smoke gap in 261.256 seconds.
-- Automated verification: 126 tests pass. Coverage includes source admission, content-addressed and corrupt-cache recovery, hidden-frame image isolation, per-entity decision validation, narrative/storyboard compilation, Azure multimodal request construction, sparse timing normalization, Story v2 public artifacts, sibling cancellation, metadata rollback, audio duration, local API races, UI-controller behavior, and Cycles GPU configuration.
+- Automated verification: 135 tests and 13 subtests pass. Coverage includes source admission, content-addressed and corrupt-cache recovery, hidden-frame image isolation, per-entity decision validation, narrative/storyboard compilation, Azure multimodal request construction and deployment validation, sparse timing normalization, Story v2 public artifacts, sibling cancellation, metadata rollback, audio duration, local API races, UI-controller behavior, and Cycles GPU configuration.
 - A real headless Blender contract probe preserved a 720×1280 portrait resolution at 29.97 fps. A new full render has not been run during this audit.
 
 ## 2. Current State
@@ -810,7 +810,7 @@ The Azure reasoner receives the ledger, not raw hidden footage. It returns one s
       "unknowns": ["Exact arm motion is not observable."]
     }
   ],
-  "metadata": {"provider": "azure_openai", "deployment": "gpt-5.4"}
+  "metadata": {"provider": "azure_openai", "deployment": "gpt-5.4-mini"}
 }
 ```
 
@@ -823,7 +823,7 @@ The model's authority is deliberately narrow:
 - deterministic Python validates the evidence digest, references, IDs, value ranges, candidate membership, and plan-v2 contract
 - an invalid response activates a clearly labeled deterministic fallback; a bounded repair request may be added later only if it remains measurable and safe
 
-Use the Azure OpenAI Responses API with `store=False`. The implemented adapter uses Python's standard HTTPS library, avoiding another runtime dependency, and reads `AZURE_OPENAI_API_KEY`, `AZURE_OPENAI_BASE_URL`, and `AZURE_OPENAI_CHAT_DEPLOYMENT`. Azure API calls target the deployment name; the current local deployment value is `gpt-5.4`. Structured output is requested through a strict JSON schema and validated again locally.
+Use the Azure OpenAI Responses API with `store=False`. The implemented adapter uses Python's standard HTTPS library, avoiding another runtime dependency, and reads `AZURE_OPENAI_API_KEY`, `AZURE_OPENAI_BASE_URL`, and `AZURE_OPENAI_CHAT_DEPLOYMENT`. Azure API calls target the deployment name; the current local deployment value is `gpt-5.4-mini`. A read-only data-plane deployment check runs before the minimal structured-output probe. Structured output is requested through a strict JSON schema and validated again locally.
 
 Cache the response by evidence digest, deployment, prompt version, schema version, and inference configuration. A resume must never pay for or execute the same accepted reasoning request twice. API errors, rate limits, refusals, timeouts, token usage, and cache status belong in a sanitized reasoning report; secrets, full request authorization headers, and private image URLs do not.
 

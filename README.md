@@ -38,7 +38,7 @@ The response follows a strict per-gap/per-entity schema containing selected hypo
 
 Azure-assisted reasoning is cached by evidence, clue, hypothesis, visual-manifest, deployment, prompt, schema, and reasoning-effort digests. Invalid gap or narrative responses use an explicitly labeled deterministic fallback—never a silent AI-to-deterministic switch.
 
-Local Azure reasoning requires `AZURE_OPENAI_API_KEY`, `AZURE_OPENAI_BASE_URL`, and `AZURE_OPENAI_CHAT_DEPLOYMENT`. The configured `gpt-5.4` deployment is passed to the Azure Responses API with `store=false` and a strict JSON schema. The adapter uses Python's standard HTTPS library, so no extra OpenAI package is required. Secrets are never written into reports, logs, browser responses, notebooks, or Git.
+Local Azure reasoning requires `AZURE_OPENAI_API_KEY`, `AZURE_OPENAI_BASE_URL`, and `AZURE_OPENAI_CHAT_DEPLOYMENT`. The configured `gpt-5.4-mini` deployment is passed to the Azure Responses API with `store=false` and a strict JSON schema. A read-only deployment-list check now rejects misspelled or unavailable deployment names with the available resource deployments before the structured-output probe runs. The adapter uses Python's standard HTTPS library, so no extra OpenAI package is required. Secrets are never written into reports, logs, browser responses, notebooks, or Git.
 
 API design references: [Azure OpenAI Responses API](https://learn.microsoft.com/en-us/azure/foundry/openai/how-to/responses), [Azure structured outputs](https://learn.microsoft.com/en-us/azure/foundry/openai/how-to/structured-outputs), and [supported reasoning summaries](https://learn.microsoft.com/en-us/azure/foundry/openai/how-to/reasoning).
 

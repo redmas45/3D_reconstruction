@@ -18,6 +18,8 @@ AZURE_CHAT_DEPLOYMENT_VARIABLE = "AZURE_OPENAI_CHAT_DEPLOYMENT"
 LEGACY_DEPLOYMENT_VARIABLE = "AZURE_OPENAI_DEPLOYMENT"
 DEFAULT_REQUEST_TIMEOUT_SECONDS = 120
 DEFAULT_MAX_OUTPUT_TOKENS = 8_000
+AZURE_DEPLOYMENTS_API_VERSION = "2023-03-15-preview"
+MAXIMUM_AZURE_ERROR_MESSAGE_LENGTH = 400
 SUPPORTED_REASONING_EFFORTS = frozenset({"none", "low", "medium", "high", "xhigh"})
 SYSTEM_INSTRUCTIONS = """You are a constrained forensic reconstruction planner.
 Use only the supplied visible-frame evidence ledger, clue catalog, bounded images, and hypothesis library.
@@ -111,6 +113,15 @@ class AzureReasoningSettings:
             return f"{base_url}/responses"
         return f"{base_url}/openai/v1/responses"
 
+    @property
+    def deployments_url(self) -> str:
+        parsed_endpoint = urlparse(self.endpoint)
+        authority = f"{parsed_endpoint.scheme}://{parsed_endpoint.netloc}"
+        return (
+            f"{authority}/openai/deployments"
+            f"?api-version={AZURE_DEPLOYMENTS_API_VERSION}"
+        )
+
 
 def request_decision_trace(settings: AzureReasoningSettings, ledger: dict, schema: dict) -> tuple[dict, dict]:
     return request_structured_response(
@@ -158,6 +169,7 @@ def request_reconstruction_narrative(
 
 
 def probe_azure_reasoning(settings: AzureReasoningSettings) -> dict:
+    deployment_metadata = probe_azure_deployment(settings)
     probe_settings = replace(
         settings,
         max_output_tokens=512,
@@ -173,7 +185,27 @@ def probe_azure_reasoning(settings: AzureReasoningSettings) -> dict:
     )
     if response.get("status") != "ready":
         raise AzureReasoningResponseError("Azure reasoning readiness probe was invalid")
-    return metadata
+    return {**metadata, **deployment_metadata}
+
+
+def probe_azure_deployment(settings: AzureReasoningSettings) -> dict:
+    request = urllib.request.Request(
+        settings.deployments_url,
+        headers={"api-key": settings.api_key},
+        method="GET",
+    )
+    payload = _send_request(request, settings.timeout_seconds)
+    deployment_names = _deployment_names(payload)
+    if settings.deployment not in deployment_names:
+        available = ", ".join(deployment_names) or "none"
+        raise AzureReasoningConfigurationError(
+            f"Azure deployment '{settings.deployment}' was not found. "
+            f"Available deployments: {available}"
+        )
+    return {
+        "deployment_validated": True,
+        "available_deployment_count": len(deployment_names),
+    }
 
 
 def request_structured_response(
@@ -266,7 +298,10 @@ def _send_request(request: urllib.request.Request, timeout_seconds: int) -> dict
         with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
             response_bytes = response.read()
     except urllib.error.HTTPError as error:
-        raise AzureReasoningRequestError(f"Azure reasoning request failed with HTTP {error.code}") from error
+        detail = _azure_http_error_detail(error)
+        raise AzureReasoningRequestError(
+            f"Azure reasoning request failed with HTTP {error.code}{detail}"
+        ) from error
     except (urllib.error.URLError, TimeoutError, socket.timeout) as error:
         raise AzureReasoningRequestError("Azure reasoning request could not be completed") from error
     try:
@@ -276,6 +311,35 @@ def _send_request(request: urllib.request.Request, timeout_seconds: int) -> dict
     if not isinstance(payload, dict):
         raise AzureReasoningResponseError("Azure reasoning response must be an object")
     return payload
+
+
+def _deployment_names(payload: dict) -> list[str]:
+    deployments = payload.get("data")
+    if not isinstance(deployments, list):
+        raise AzureReasoningResponseError(
+            "Azure deployment-list response was invalid"
+        )
+    return sorted({
+        str(item["id"])
+        for item in deployments
+        if isinstance(item, dict) and item.get("id")
+    })
+
+
+def _azure_http_error_detail(error: urllib.error.HTTPError) -> str:
+    try:
+        response_bytes = error.read()
+        payload = json.loads(response_bytes.decode("utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return ""
+    error_payload = payload.get("error") if isinstance(payload, dict) else None
+    if not isinstance(error_payload, dict):
+        return ""
+    code = str(error_payload.get("code", "")).strip()
+    message = str(error_payload.get("message", "")).strip()
+    bounded_message = message[:MAXIMUM_AZURE_ERROR_MESSAGE_LENGTH]
+    details = ": ".join(part for part in (code, bounded_message) if part)
+    return f" ({details})" if details else ""
 
 
 def _parse_structured_output(response_payload: dict) -> dict:

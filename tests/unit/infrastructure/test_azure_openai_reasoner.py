@@ -12,6 +12,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
 from infrastructure.azure_openai_reasoner import (
+    AzureReasoningConfigurationError,
     AzureReasoningSettings,
     probe_azure_reasoning,
     request_decision_trace,
@@ -98,18 +99,44 @@ class AzureOpenAIReasonerTests(unittest.TestCase):
             max_output_tokens=8_000,
             reasoning_effort="medium",
         )
+        deployment_response = _Response({
+            "data": [{"id": "gpt-5.4"}],
+        })
         response = _Response({
             "id": "response-probe",
             "output_text": json.dumps({"status": "ready"}),
         })
 
-        with patch("urllib.request.urlopen", return_value=response) as urlopen_mock:
+        with patch(
+            "urllib.request.urlopen",
+            side_effect=[deployment_response, response],
+        ) as urlopen_mock:
             metadata = probe_azure_reasoning(settings)
 
-        request_body = json.loads(urlopen_mock.call_args.args[0].data.decode("utf-8"))
+        request_body = json.loads(
+            urlopen_mock.call_args_list[1].args[0].data.decode("utf-8")
+        )
         self.assertEqual(512, request_body["max_output_tokens"])
         self.assertEqual("none", request_body["reasoning"]["effort"])
         self.assertEqual("response-probe", metadata["response_id"])
+        self.assertTrue(metadata["deployment_validated"])
+
+    def test_probe_reports_available_deployments_before_model_request(self) -> None:
+        settings = AzureReasoningSettings(
+            endpoint="https://example.openai.azure.com/openai/v1/",
+            api_key="secret-test-key",
+            deployment="missing-deployment",
+        )
+        deployment_response = _Response({
+            "data": [{"id": "gpt-5-mini"}, {"id": "gpt-5.4-mini"}],
+        })
+
+        with patch("urllib.request.urlopen", return_value=deployment_response):
+            with self.assertRaisesRegex(
+                AzureReasoningConfigurationError,
+                "Available deployments: gpt-5-mini, gpt-5.4-mini",
+            ):
+                probe_azure_reasoning(settings)
 
 
 if __name__ == "__main__":

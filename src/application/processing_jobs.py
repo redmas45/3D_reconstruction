@@ -550,8 +550,13 @@ def _validate_gap_policy(video: dict, configuration: dict) -> None:
         fps=float(video["fps"]),
         rng=random.Random(0),
         missing_fraction=float(gap_configuration.get("missing_fraction", 0.25)),
-        min_gap_seconds=float(gap_configuration.get("min_seconds", 1.0)),
-        max_gap_seconds=float(gap_configuration.get("max_seconds", 3.0)),
+        min_gap_seconds=float(gap_configuration.get("min_seconds", 5.0)),
+        max_gap_seconds=float(gap_configuration.get("max_seconds", 7.0)),
+        compact_min_gap_seconds=float(gap_configuration.get("compact_min_seconds", 1.0)),
+        compact_max_gap_seconds=float(gap_configuration.get("compact_max_seconds", 3.0)),
+        review_profile_min_video_seconds=float(
+            gap_configuration.get("review_profile_min_video_seconds", 60.0)
+        ),
         context_seconds=float(gap_configuration.get("context_seconds", 2.0)),
     )
 

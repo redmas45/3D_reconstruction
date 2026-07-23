@@ -25,6 +25,8 @@ def build_human(entity: dict) -> dict:
         "arms": arms,
         "legs": legs,
         "wheels": [],
+        "steering_wheels": [],
+        "wheel_radius": None,
         "materials": [*materials.values(), ring_material],
     }
 
@@ -58,16 +60,26 @@ def _arm(
 def _leg(
     root: bpy.types.Object, side: float, scale: float, materials: dict,
 ) -> bpy.types.Object:
-    hip = _empty("Hip", root, (side * 0.14, 0.0, 0.82 * scale))
-    _cylinder("Thigh", (0.0, 0.0, -0.23), 0.105, 0.46, materials["lower"], hip)
-    _cylinder("Shin", (0.0, 0.015, -0.65), 0.085, 0.40, materials["lower"], hip)
-    _cube("Foot", (0.0, -0.07, -0.89), (0.10, 0.20, 0.07), materials["shoe"], hip)
+    hip = _empty("Hip", root, (side * 0.14, 0.0, 0.96 * scale))
+    _cylinder(
+        "Thigh", (0.0, 0.0, -0.23 * scale),
+        0.105 * scale, 0.46 * scale, materials["lower"], hip,
+    )
+    _cylinder(
+        "Shin", (0.0, 0.015, -0.65 * scale),
+        0.085 * scale, 0.40 * scale, materials["lower"], hip,
+    )
+    _cube(
+        "Foot", (0.0, -0.07, -0.89 * scale),
+        (0.10 * scale, 0.20 * scale, 0.07 * scale),
+        materials["shoe"], hip,
+    )
     return hip
 
 
 def _build_silhouette(entity: dict, height_scale: float) -> dict:
     material = create_material(
-        f"Weak_{entity['id']}", confidence_color(entity["confidence"]), alpha=0.14
+        f"Weak_{entity['id']}", confidence_color(entity["confidence"]), alpha=0.40
     )
     root = _empty(f"Human_{entity['id']}", None, (0.0, 0.0, 0.0))
     _cylinder("UncertainPresence", (0.0, 0.0, 0.90 * height_scale), 0.18, 1.42, material, root)
@@ -78,6 +90,8 @@ def _build_silhouette(entity: dict, height_scale: float) -> dict:
         "arms": [],
         "legs": [],
         "wheels": [],
+        "steering_wheels": [],
+        "wheel_radius": None,
         "materials": [material, ring_material],
     }
 

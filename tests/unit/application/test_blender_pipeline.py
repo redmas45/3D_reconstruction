@@ -31,10 +31,12 @@ class BlenderPipelineCacheTests(unittest.TestCase):
             plan_path = _write_plan(temporary_root / "plan.json", 1920, 1080)
             gap_directory = temporary_root / "gap"
             _write_cache(gap_directory, plan_path)
+            plan = json.loads(plan_path.read_text(encoding="utf-8"))
+            expected_width, expected_height = _production_resolution(plan["render"])
 
             with patch(
                 "application.blender_pipeline.inspect_video_contract",
-                return_value=VideoContract(1920, 1080, 29.97, 30),
+                return_value=VideoContract(expected_width, expected_height, 29.97, 30),
             ):
                 with patch("application.blender_pipeline.render_with_blender") as render_mock:
                     output_path = render_blender_gap(

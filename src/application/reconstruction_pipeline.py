@@ -1,7 +1,8 @@
 """Coordinates evidence analysis, reconstruction rendering, and final video assembly."""
 
-import random
 import hashlib
+import json
+import random
 import threading
 import time
 from concurrent.futures import Future, ThreadPoolExecutor, as_completed
@@ -30,6 +31,10 @@ from domain.reconstruction_cache import (
     selection_cache_is_compatible as _selection_cache_is_compatible,
     source_video_contract as _source_video_contract,
 )
+from domain.presentation_manifest import (
+    build_presentation_manifest,
+    write_presentation_manifest,
+)
 from domain.render_runtime_budget import (
     RepresentativePreviewApprovalRequired,
     enforce_runtime_budget,
@@ -38,6 +43,7 @@ from domain.render_runtime_budget import (
     predicted_total_seconds,
     representative_gap_index,
 )
+from domain.render_resolution import scaled_render_dimensions
 from infrastructure.blender_runner import DEFAULT_RENDER_STALL_TIMEOUT_SECONDS, find_blender_executable
 from infrastructure.json_files import read_json_file, write_json_file
 from infrastructure.media_tools import (
@@ -222,8 +228,13 @@ def _new_selection(info: dict, gap_config: dict, rng: random.Random) -> dict:
         fps=info["fps"],
         rng=rng,
         missing_fraction=gap_config.get("missing_fraction", 0.25),
-        min_gap_seconds=gap_config.get("min_seconds", 1.0),
-        max_gap_seconds=gap_config.get("max_seconds", 3.0),
+        min_gap_seconds=gap_config.get("min_seconds", 5.0),
+        max_gap_seconds=gap_config.get("max_seconds", 7.0),
+        compact_min_gap_seconds=gap_config.get("compact_min_seconds", 1.0),
+        compact_max_gap_seconds=gap_config.get("compact_max_seconds", 3.0),
+        review_profile_min_video_seconds=gap_config.get(
+            "review_profile_min_video_seconds", 60.0,
+        ),
         context_seconds=gap_config.get("context_seconds", 2.0),
     )
     return {
@@ -439,9 +450,17 @@ def _render_blender_hidden_segment(
         stall_timeout_seconds=stall_timeout_seconds,
     )
     hidden_range = prepared.gap_selection["hidden_ranges"][gap_index]
+    plan = json.loads(
+        prepared.blender_plan_paths[gap_index].read_text(encoding="utf-8"),
+    )
+    render_width, render_height = scaled_render_dimensions(
+        int(plan["render"]["source_width"]),
+        int(plan["render"]["source_height"]),
+        int(plan["render"]["production_scale_percent"]),
+    )
     expected_contract = VideoContract(
-        _scaled_render_dimension(prepared.video_info["width"], context.configuration),
-        _scaled_render_dimension(prepared.video_info["height"], context.configuration),
+        render_width,
+        render_height,
         prepared.video_info["fps"],
         int(hidden_range[1]) - int(hidden_range[0]) + 1,
     )
@@ -677,7 +696,9 @@ def _parallel_gap_renderer_count(configuration: dict, gap_count: int) -> int:
 
 
 def _scaled_render_dimension(source_dimension: int, configuration: dict) -> int:
-    scale_percent = int(configuration.get("renderer", {}).get("production_scale_percent", 100))
+    scale_percent = int(
+        configuration.get("renderer", {}).get("production_scale_percent", 100),
+    )
     scaled_dimension = max(2, round(source_dimension * scale_percent / 100.0))
     return scaled_dimension if scaled_dimension % 2 == 0 else scaled_dimension + 1
 
@@ -852,7 +873,28 @@ def _render_and_finalize(
         video_path, evaluation_items, options.config_data, options.cancellation_check,
     )
     write_json(prepared.work_dir / "diagnostic_report.json", diagnostic_report)
-    return _stitch_final_output(video_path, options, prepared, sequence, progress_callback)
+    final_output = _stitch_final_output(
+        video_path, options, prepared, sequence, progress_callback,
+    )
+    presentation = build_presentation_manifest(
+        prepared.video_info,
+        prepared.gap_selection,
+        prepared.scene_report,
+        prepared.blender_plan_paths,
+        prepared.work_dir,
+        final_output,
+        options.renderer_mode,
+    )
+    write_presentation_manifest(
+        presentation, prepared.work_dir / "presentation_manifest.json",
+    )
+    _report(
+        progress_callback,
+        "completed",
+        COMPLETED_PROGRESS,
+        "Reconstruction and judge presentation complete",
+    )
+    return final_output
 
 
 def _prepare_timeline_render_context(
@@ -908,7 +950,7 @@ def _stitch_final_output(
         prepared.video_info["fps"],
         prepared.video_info["frames"],
     ))
-    _report(progress_callback, "completed", COMPLETED_PROGRESS, "Reconstruction complete")
+    _report(progress_callback, "completed", 0.99, "Preparing judge presentation")
     return final_output
 
 

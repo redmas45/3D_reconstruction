@@ -9,6 +9,7 @@ sys.path.insert(0, str(PROJECT_ROOT / "src"))
 from domain.camera_calibration import build_camera_contract, image_point_to_world
 from domain.path_prediction import (
     build_entity_prediction,
+    duration_confidence_multiplier,
     heading_confidence_multiplier,
     position_residual_confidence_multiplier,
 )
@@ -114,9 +115,52 @@ class PathPredictionTests(unittest.TestCase):
         self.assertIsNotNone(left_entry)
         self.assertEqual(right_entry["confidence"], left_entry["confidence"])
 
+    def test_long_gap_uses_multiple_bounded_waypoints(self) -> None:
+        prediction = build_entity_prediction(
+            _moving_track("person_long"), (10, 69), 10.0, (640, 480),
+            build_camera_contract(_scene_report()),
+        )
+
+        self.assertIsNotNone(prediction)
+        waypoints = prediction["path_prediction"]["waypoints"]
+        self.assertGreaterEqual(len(waypoints), 5)
+        self.assertLessEqual(len(waypoints), 8)
+        self.assertEqual("ground_plane_kinematic", prediction["kinematics"]["model"])
+        self.assertTrue(prediction["kinematics"]["ground_contact_required"])
+
+    def test_long_gap_reduces_inference_confidence(self) -> None:
+        self.assertLess(duration_confidence_multiplier(7.0), duration_confidence_multiplier(2.0))
+
+    def test_person_prediction_is_capped_at_plausible_speed(self) -> None:
+        prediction = build_entity_prediction(
+            _moving_track("person_fast", pixel_step=200), (10, 69), 10.0,
+            (640, 480), build_camera_contract(_scene_report()),
+        )
+
+        self.assertIsNotNone(prediction)
+        self.assertLessEqual(prediction["speed_meters_per_second"], 3.0)
+
 
 def _scene_report() -> dict:
     return {"video": {"width": 640, "height": 480}, "tracks": []}
+
+
+def _moving_track(track_id: str, pixel_step: int = 10) -> dict:
+    return {
+        "id": track_id,
+        "class_name": "person",
+        "continuity_confidence": 0.9,
+        "detections": [
+            {"frame": 8, "bbox": [90, 100, 110, 200], "confidence": 0.9},
+            {
+                "frame": 9,
+                "bbox": [90 + pixel_step, 100, 110 + pixel_step, 200],
+                "confidence": 0.9,
+            },
+            {"frame": 70, "bbox": [300, 100, 320, 200], "confidence": 0.9},
+            {"frame": 71, "bbox": [310, 100, 330, 200], "confidence": 0.9},
+        ],
+    }
 
 
 if __name__ == "__main__":

@@ -12,6 +12,7 @@ MINIMUM_ETA_PROGRESS = 0.02
 PUBLIC_PROGRESS_DECIMAL_PLACES = 4
 TERMINAL_JOB_STATUSES = frozenset({JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED})
 PUBLIC_REASONING_FILENAME = "reasoning_public.json"
+PRESENTATION_MANIFEST_FILENAME = "presentation_manifest.json"
 MAXIMUM_PUBLIC_REASONING_BYTES = 512_000
 MAXIMUM_PUBLIC_REASONING_ITEMS = 50
 
@@ -48,6 +49,7 @@ def build_public_job_record(record: ProcessingJob) -> dict[str, object]:
         "is_legacy_output": record.is_legacy_output,
         "renderer_mode": record.renderer_mode,
         "reasoning": _reasoning_snapshot(record.output_dir),
+        "presentation": _presentation_snapshot(record.output_dir),
     }
 
 
@@ -63,6 +65,103 @@ def _reasoning_snapshot(output_directory: Path) -> dict | None:
         return None
     payload = read_json_file(summary_paths[0])
     return payload if _valid_reasoning_summary(payload) else None
+
+
+def _presentation_snapshot(output_directory: Path) -> dict | None:
+    work_directory = output_directory / "_work"
+    if not work_directory.is_dir():
+        return None
+    try:
+        manifest_paths = list(work_directory.glob(f"*/{PRESENTATION_MANIFEST_FILENAME}"))
+    except OSError:
+        return None
+    if len(manifest_paths) != 1 or not _is_bounded_file(manifest_paths[0]):
+        return None
+    payload = read_json_file(manifest_paths[0])
+    return payload if _valid_presentation_manifest(payload) else None
+
+
+def _valid_presentation_manifest(payload: object) -> bool:
+    if not isinstance(payload, dict):
+        return False
+    story, source, gaps, clues = (
+        payload.get("story"),
+        payload.get("source"),
+        payload.get("gaps"),
+        payload.get("top_clues"),
+    )
+    return all((
+        payload.get("schema_version") == 1,
+        payload.get("status") == "completed",
+        isinstance(payload.get("title"), str),
+        isinstance(payload.get("disclosure"), str),
+        _valid_presentation_source(source),
+        _valid_presentation_story(story),
+        isinstance(gaps, list) and len(gaps) <= MAXIMUM_PUBLIC_REASONING_ITEMS,
+        all(_valid_presentation_gap(item) for item in gaps) if isinstance(gaps, list) else False,
+        isinstance(clues, list) and len(clues) <= MAXIMUM_PUBLIC_REASONING_ITEMS,
+        all(_valid_presentation_clue(item) for item in clues) if isinstance(clues, list) else False,
+        isinstance(payload.get("render"), dict),
+        isinstance(payload.get("output"), dict),
+    ))
+
+
+def _valid_presentation_source(value: object) -> bool:
+    return (
+        isinstance(value, dict)
+        and all(
+            isinstance(value.get(field), (int, float))
+            and not isinstance(value.get(field), bool)
+            for field in ("duration_seconds", "fps", "width", "height", "observed_fraction")
+        )
+    )
+
+
+def _valid_presentation_story(value: object) -> bool:
+    return (
+        isinstance(value, dict)
+        and isinstance(value.get("headline"), str)
+        and isinstance(value.get("summary"), str)
+        and isinstance(value.get("confidence"), (int, float))
+        and not isinstance(value.get("confidence"), bool)
+        and isinstance(value.get("causal_link_supported"), bool)
+        and _valid_public_text_list(value.get("points"))
+    )
+
+
+def _valid_presentation_gap(value: object) -> bool:
+    if not isinstance(value, dict):
+        return False
+    numeric_fields = (
+        "gap_index", "start_frame", "end_frame", "start_seconds",
+        "end_seconds", "duration_seconds", "confidence",
+        "entity_count", "calibration_confidence",
+    )
+    return all((
+        all(
+            isinstance(value.get(field), (int, float))
+            and not isinstance(value.get(field), bool)
+            for field in numeric_fields
+        ),
+        all(
+            isinstance(value.get(field), str)
+            for field in ("before_observed", "inside_inferred", "after_observed")
+        ),
+        _valid_public_text_list(value.get("unknowns")),
+        _valid_public_text_list(value.get("clue_ids")),
+    ))
+
+
+def _valid_presentation_clue(value: object) -> bool:
+    return (
+        isinstance(value, dict)
+        and all(
+            isinstance(value.get(field), str)
+            for field in ("id", "category", "statement")
+        )
+        and isinstance(value.get("confidence"), (int, float))
+        and not isinstance(value.get("confidence"), bool)
+    )
 
 
 def _is_bounded_file(path: Path) -> bool:

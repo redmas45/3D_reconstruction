@@ -20,6 +20,7 @@ MAXIMUM_REASONING_TIMEOUT_SECONDS = 600
 MINIMUM_REASONING_OUTPUT_TOKENS = 512
 MAXIMUM_REASONING_OUTPUT_TOKENS = 32_000
 SUPPORTED_REASONING_EFFORTS = frozenset({"none", "low", "medium", "high", "xhigh"})
+SUPPORTED_PRODUCTION_HUD_MODES = frozenset({"minimal", "technical"})
 
 
 class ConfigurationValidationError(ValueError):
@@ -52,10 +53,22 @@ def _validate_gap_configuration(gap_configuration: dict) -> None:
     missing_fraction = _required_number(gap_configuration, "missing_fraction")
     minimum_seconds = _required_number(gap_configuration, "min_seconds")
     maximum_seconds = _required_number(gap_configuration, "max_seconds")
+    compact_minimum_seconds = _required_number(gap_configuration, "compact_min_seconds")
+    compact_maximum_seconds = _required_number(gap_configuration, "compact_max_seconds")
+    review_minimum_video_seconds = _required_number(
+        gap_configuration, "review_profile_min_video_seconds",
+    )
     if not 0.0 < missing_fraction <= MAXIMUM_MISSING_FRACTION:
         raise ConfigurationValidationError("gap.missing_fraction must be greater than 0 and at most 0.95")
     if minimum_seconds < MINIMUM_GAP_SECONDS or maximum_seconds < minimum_seconds:
         raise ConfigurationValidationError("Gap duration bounds are invalid")
+    if (
+        compact_minimum_seconds < MINIMUM_GAP_SECONDS
+        or compact_maximum_seconds < compact_minimum_seconds
+    ):
+        raise ConfigurationValidationError("Compact gap duration bounds are invalid")
+    if review_minimum_video_seconds <= 0:
+        raise ConfigurationValidationError("gap.review_profile_min_video_seconds must be positive")
 
 
 def _validate_yolo_configuration(yolo_configuration: dict) -> None:
@@ -129,6 +142,8 @@ def _validate_smart_renderer_configuration(configuration: dict) -> None:
         "maximum_cpu_workers": (1, 16),
         "checkpoint_frame_batch": (1, 500),
         "diagnostic_pose_count": (1, 16),
+        "minimum_render_long_edge": (320, 7680),
+        "maximum_render_long_edge": (320, 7680),
     }
     for field_name, bounds in bounded_fields.items():
         value = _required_integer(configuration, field_name)
@@ -138,6 +153,17 @@ def _validate_smart_renderer_configuration(configuration: dict) -> None:
             )
     if not isinstance(configuration.get("requires_preview_approval"), bool):
         raise ConfigurationValidationError("renderer.requires_preview_approval must be boolean")
+    if not isinstance(configuration.get("hybrid_static_backplate"), bool):
+        raise ConfigurationValidationError("renderer.hybrid_static_backplate must be boolean")
+    if configuration.get("production_hud_mode") not in SUPPORTED_PRODUCTION_HUD_MODES:
+        raise ConfigurationValidationError("renderer.production_hud_mode is unsupported")
+    if (
+        int(configuration["maximum_render_long_edge"])
+        < int(configuration["minimum_render_long_edge"])
+    ):
+        raise ConfigurationValidationError(
+            "renderer.maximum_render_long_edge must not be smaller than the minimum"
+        )
     for field_name in (
         "runtime_budget_enabled",
         "allow_runtime_budget_override",

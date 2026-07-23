@@ -7,14 +7,14 @@ Local pipeline for replacing a distributed 25% of each input video with evidence
 For every supported video uploaded through the local UI or selected in the Colab notebook, the pipeline:
 
 1. Randomly selects multiple non-overlapping gaps.
-2. Keeps every gap between 1 and 3 seconds.
-3. Makes the combined hidden duration approximately 25% of the full video.
+2. Uses reviewable 5–7 second gaps for videos at least 60 seconds long, with a 1–3 second compact policy for shorter inputs.
+3. Makes the combined hidden duration exactly the configured 25% at frame precision, subject only to integer frame rounding.
 4. Keeps the remaining 75% as visible evidence with live YOLO classifications.
 5. Tracks people, vehicles, bags, and relevant objects through the visible ranges.
 6. Writes a structured evidence ledger containing visible observations, identities, motion, scene clues, conflicts, and unknowns.
 7. Shows those clues in the UI before reconstruction decisions are rendered.
 8. Optionally asks a configured Azure OpenAI deployment to select and explain bounded reconstruction hypotheses from the ledger and selected visible keyframes.
-9. Validates every AI decision against the evidence contract, then reconstructs each short gap.
+9. Validates every AI decision against the evidence contract, then reconstructs each bounded gap.
 10. Stitches the original timeline back together at its original duration.
 11. Evaluates completed reconstructions against hidden ground truth only afterward.
 
@@ -52,11 +52,13 @@ The default hidden-gap renderer uses headless Blender 4.5 LTS:
 - neutral geometry for person-only scenes and street proxies only when vehicle evidence supports them
 - procedural articulated people and simplified vehicles
 - global per-track body proportions and evidence-derived clothing colors
-- forward-predicted three-waypoint paths for continuous/exiting tracks; entering tracks are reverse-inferred from their first post-gap evidence and labeled accordingly
+- duration-aware three-to-eight-waypoint paths for continuous/exiting tracks; entering tracks are reverse-inferred from their first post-gap evidence and labeled accordingly
+- class-specific maximum speed, acceleration, and turn-rate contracts with ground contact, distance-driven gait, wheel rotation, and vehicle steering
 - confidence-based solid, translucent, or simplified silhouette fidelity
-- evidence inset, camera-prior confidence, uncertainty rings, and explicit non-ground-truth labeling
-- short dark forensic shutters between visible evidence and inferred 3D
-- sparse 8 fps PNG rendering at 45% internal scale and two Cycles samples by default, followed by exact source-FPS and frame-count normalization
+- a small persistent `RECONSTRUCTED · AI-INFERRED` badge, uncertainty rings, and explicit non-ground-truth disclosure
+- no black transition shutters or large entering/returning captions in production output
+- a sharp hybrid static-camera profile: the last visible boundary frame remains the full evidence backplate while transparent actors, contact shadows, uncertainty, and the minimal badge are composited over it
+- sparse 6 fps PNG rendering with an adaptive 960–1280-pixel long-edge target and two Cycles samples by default, followed by exact source-FPS and frame-count normalization
 - atomic frame manifests so a rerun skips valid completed PNGs inside an interrupted gap
 - same-render diagnostic environment, actor, uncertainty, HUD, depth, and shadow passes at five review poses
 - a heaviest-gap runtime benchmark and hard 45-minute predicted-runtime gate before remaining gaps begin
@@ -88,6 +90,7 @@ outputs/jobs/<job_id>/_work/<video_name>_<source_sha12>/evidence_ledger.json
 outputs/jobs/<job_id>/_work/<video_name>_<source_sha12>/decision_trace.json
 outputs/jobs/<job_id>/_work/<video_name>_<source_sha12>/reasoning_cache.json
 outputs/jobs/<job_id>/_work/<video_name>_<source_sha12>/reasoning_public.json
+outputs/jobs/<job_id>/_work/<video_name>_<source_sha12>/presentation_manifest.json
 outputs/jobs/<job_id>/_work/<video_name>_<source_sha12>/entity_registry.json
 outputs/jobs/<job_id>/_work/<video_name>_<source_sha12>/camera_motion_report.json
 outputs/jobs/<job_id>/_work/<video_name>_<source_sha12>/reconstruction_plans_v2.json
@@ -126,6 +129,7 @@ The interface opens at `http://127.0.0.1:8000` and provides:
 - persistent dark/light theme toggle in the top-right navigation
 - selectable Blender forensic-3D or explicit 2.5D fallback rendering
 - evidence clues, a whole-video reconstructed story, observed/inferred/observed gap timelines, and per-entity decisions with confidence and unknowns
+- a judge-facing completed-result layout with player gap markers, visible story summary, strongest clues, reviewable gap cards, and a collapsed technical audit
 - a single-instance project lock, loopback-only binding, and Host validation so a second app or browser DNS rebinding cannot interfere with active jobs
 
 Useful server options:
@@ -139,17 +143,17 @@ The UI uses only Python's standard-library HTTP server and vanilla HTML, CSS, an
 
 ## Google Colab
 
-Open or upload `colab/reconstruction.ipynb` in Google Colab, select a GPU runtime, and run its cells in order. The notebook clones this repository and calls the same `src/`, `blender/`, and `config/` pipeline used by the local interface; it does not maintain a second reconstruction implementation or expose the local web UI through a tunnel.
+Open or upload `colab/reconstruction.ipynb` in Google Colab, select a GPU runtime, and run its cells in order. The notebook clones this repository and calls the same `src/`, `blender/`, and `config/` pipeline used by the local interface; it does not maintain a second reconstruction implementation or expose a public tunnel.
 
-The notebook installs Blender 4.5 LTS and FFmpeg, verifies PyTorch CUDA for YOLO, and separately tests Blender Cycles with a real OptiX/CUDA render. A successful probe selects Cycles GPU rendering with two samples, denoising, 40% internal scale, 6 reconstruction fps, at most six detailed entities, one Blender worker, and a 15-minute no-frame timeout. YOLO and Blender use the same T4 sequentially; concurrent Cycles processes are intentionally avoided because they contend for one GPU. If neither OptiX nor CUDA completes the probe, the notebook falls back to Workbench software rendering with two workers.
+The notebook installs Blender 4.5 LTS and FFmpeg, verifies PyTorch CUDA for YOLO, and separately tests Blender Cycles with a real OptiX/CUDA render. A successful probe selects Cycles GPU rendering with two samples, denoising, 6 reconstruction fps, adaptive sharp resolution, at most six detailed entities, one Blender worker, and a 15-minute no-frame timeout. YOLO and Blender use the same T4 sequentially; concurrent Cycles processes are intentionally avoided because they contend for one GPU. If neither OptiX nor CUDA completes the probe, the notebook falls back to Workbench software rendering with two workers.
 
 Azure values can come from Colab Secrets or from a separately uploaded local `.env`. Colab cannot read a file that remains on the laptop, so the notebook opens an upload picker only when required values are missing. That upload is parsed as bytes in memory, restricted to the three Azure names, and is not copied to the repository, Drive, logs, or reports. A small structured-output probe validates the configured deployment before YOLO or Blender spends significant time.
 
-The notebook accepts one common-format video, renders from fast `/content` storage, checkpoints completed PNG frames and complete gaps to Google Drive, saves reports/video under `MyDrive/3D_Reconstruction`, and skips memory-heavy inline playback for results over 80 MB. It renders the predicted heaviest gap first, records the measured and projected runtime, rejects a projection above 45 minutes, and shows the representative gap for explicit `APPROVE` confirmation before starting the rest. Re-running resumes the saved representative gap and compatible sparse frames. Push local changes to `main` before starting so the clone uses this code.
+The notebook accepts one common-format video, renders from fast `/content` storage, checkpoints completed PNG frames and complete gaps to Google Drive, and saves reports/video under `MyDrive/3D_Reconstruction`. It renders the predicted heaviest gap first, records the measured and projected runtime, rejects a projection above 45 minutes, and shows the representative gap for explicit `APPROVE` confirmation before starting the rest. Re-running resumes the saved representative gap and compatible sparse frames. After completion it creates a small 24 fps judge preview and opens the same story/clue/gap presentation through Colab's authenticated loopback proxy; the full-quality result stays in Drive and remains available for download. Push local changes to `main` before starting so the clone uses this code.
 
 The 320×180 Cycles probe verifies device access only; it is not a production-speed benchmark. A two-minute, 30 fps source hides about 30 seconds under the 25% contract, which means roughly 900 reconstructed source frames. The observed 3–4 hour Colab run reaching the T4 session limit shows that the current 75%-scale, 16-sample, source-FPS Cycles profile is not viable as the default full-video path.
 
-The smart production gate is implemented: a 40%-scale, two-sample, 6-fps Colab profile; one T4 Blender worker; atomic PNG manifests; interrupted-frame reuse; exact source-timing normalization; Drive checkpoints; representative-gap timing and approval; and six diagnostic review layers extracted from the same render at bounded pose frames. A full judge-video run and human visual approval are still required evidence that this profile is fast and coherent on the assigned Colab hardware.
+The smart production gate is implemented: adaptive 960–1280 long-edge resolution, two samples, 6 reconstruction fps, one T4 Blender worker, atomic PNG manifests, interrupted-frame reuse, exact source-timing normalization, Drive checkpoints, representative-gap timing and approval, and six diagnostic review layers extracted from the same render at bounded pose frames. A full judge-video run and human visual approval are still required evidence that this profile is fast and coherent on the assigned Colab hardware.
 
 Azure OpenAI improves the quality and auditability of reconstruction decisions; it does not make Blender rendering faster.
 
@@ -181,8 +185,11 @@ The primary settings are in `config/reconstruction_config.json`:
 {
   "gap": {
     "missing_fraction": 0.25,
-    "min_seconds": 1.0,
-    "max_seconds": 3.0,
+    "min_seconds": 5.0,
+    "max_seconds": 7.0,
+    "compact_min_seconds": 1.0,
+    "compact_max_seconds": 3.0,
+    "review_profile_min_video_seconds": 60.0,
     "context_seconds": 2.0
   },
   "reasoning": {
@@ -200,8 +207,12 @@ The primary settings are in `config/reconstruction_config.json`:
     "blender_version": "4.5 LTS",
     "default_profile": "standard_forensic",
     "production_scale_percent": 45,
-    "target_fps": 8,
+    "target_fps": 6,
     "cycles_samples": 2,
+    "minimum_render_long_edge": 960,
+    "maximum_render_long_edge": 1280,
+    "hybrid_static_backplate": true,
+    "production_hud_mode": "minimal",
     "maximum_gpu_workers": 1,
     "runtime_budget_enabled": true,
     "maximum_predicted_render_seconds": 2700,

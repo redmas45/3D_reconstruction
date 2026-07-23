@@ -83,7 +83,9 @@ def render_sparse_animation(scene: bpy.types.Scene, plan: dict, output_directory
     )
     scene.render.resolution_percentage = 100
     scene.render.image_settings.file_format = "PNG"
-    scene.render.film_transparent = False
+    scene.render.film_transparent = bool(
+        plan.get("environment", {}).get("hybrid_backplate_enabled", False),
+    )
     total_frames = int(plan["frame_count"])
     diagnostic_frames = set(_diagnostic_pose_frames(
         total_frames,

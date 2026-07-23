@@ -90,8 +90,11 @@
   },
   "gap": {
     "missing_fraction": 0.25,
-    "min_seconds": 1.0,
-    "max_seconds": 3.0,
+    "min_seconds": 5.0,
+    "max_seconds": 7.0,
+    "compact_min_seconds": 1.0,
+    "compact_max_seconds": 3.0,
+    "review_profile_min_video_seconds": 60.0,
     "context_seconds": 2.0
   },
   "scene": {
@@ -133,9 +136,13 @@
     "default_profile": "standard_forensic",
     "preview_scale_percent": 50,
     "production_scale_percent": 45,
-    "target_fps": 8,
+    "target_fps": 6,
     "scale_percent": 45,
     "cycles_samples": 2,
+    "minimum_render_long_edge": 960,
+    "maximum_render_long_edge": 1280,
+    "hybrid_static_backplate": true,
+    "production_hud_mode": "minimal",
     "maximum_detailed_entities": 6,
     "maximum_gpu_workers": 1,
     "maximum_cpu_workers": 2,

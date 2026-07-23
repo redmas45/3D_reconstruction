@@ -11,6 +11,9 @@ STREET_PROXY_PROFILE = "street"
 
 def build_environment(plan: dict) -> None:
     environment = plan["environment"]
+    if environment.get("hybrid_backplate_enabled"):
+        _build_shadow_receiver(environment)
+        return
     ground_material = create_material("Ground", environment["ground_color"], roughness=0.78)
     grid_material = create_material("EvidenceGrid", environment["grid_color"], alpha=0.34, metallic=0.15)
     bpy.ops.mesh.primitive_plane_add(size=GROUND_SIZE_METERS, location=(0.0, 10.0, 0.0))
@@ -22,6 +25,24 @@ def build_environment(plan: dict) -> None:
         _grid_line((coordinate, -GRID_HALF_EXTENT + 10.0, 0.012), (coordinate, GRID_HALF_EXTENT + 10.0, 0.012), grid_material)
     if environment.get("proxy_profile") == STREET_PROXY_PROFILE:
         _build_street_proxies()
+
+
+def _build_shadow_receiver(environment: dict) -> None:
+    shadow_material = create_material(
+        "EvidenceShadowReceiver",
+        environment["ground_color"],
+        alpha=0.04,
+        roughness=0.92,
+    )
+    bpy.ops.mesh.primitive_plane_add(
+        size=GROUND_SIZE_METERS,
+        location=(0.0, 10.0, 0.0),
+    )
+    ground = bpy.context.object
+    ground.name = "Evidence_Shadow_Receiver"
+    ground.data.materials.append(shadow_material)
+    if hasattr(ground, "is_shadow_catcher"):
+        ground.is_shadow_catcher = True
 
 
 def build_path_trail(entity: dict) -> None:

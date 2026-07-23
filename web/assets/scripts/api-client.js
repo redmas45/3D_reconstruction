@@ -52,6 +52,31 @@ const UPLOAD_TIMEOUT_MILLISECONDS = 300_000;
  */
 
 /**
+ * @typedef {Object} PresentationGap
+ * @property {number} gap_index
+ * @property {number} start_seconds
+ * @property {number} end_seconds
+ * @property {number} duration_seconds
+ * @property {number} confidence
+ * @property {string} before_observed
+ * @property {string} inside_inferred
+ * @property {string} after_observed
+ * @property {string[]} unknowns
+ */
+
+/**
+ * @typedef {Object} PresentationManifest
+ * @property {number} schema_version
+ * @property {string} title
+ * @property {string} disclosure
+ * @property {{duration_seconds:number, observed_fraction:number}} source
+ * @property {{headline:string, summary:string, confidence:number, causal_link_supported:boolean, points:string[]}} story
+ * @property {{id:string, category:string, statement:string, confidence:number}[]} top_clues
+ * @property {PresentationGap[]} gaps
+ * @property {{mode:string, engine:string, target_fps:number, hybrid_static_backplate:boolean}} render
+ */
+
+/**
  * @typedef {Object} ProcessingJob
  * @property {string} id
  * @property {string} source_name
@@ -72,6 +97,7 @@ const UPLOAD_TIMEOUT_MILLISECONDS = 300_000;
  * @property {boolean} is_legacy_output
  * @property {"blender"|"2d"} renderer_mode
  * @property {ReasoningSummary|null} reasoning
+ * @property {PresentationManifest|null} presentation
  */
 
 /** @returns {Promise<ProcessingJob[]>} */

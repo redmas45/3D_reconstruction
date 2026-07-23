@@ -16,8 +16,13 @@ def source_video_contract(video_metadata: dict) -> dict:
 def gap_cache_configuration(gap_configuration: dict) -> dict:
     return {
         "missing_fraction": float(gap_configuration.get("missing_fraction", 0.25)),
-        "min_seconds": float(gap_configuration.get("min_seconds", 1.0)),
-        "max_seconds": float(gap_configuration.get("max_seconds", 3.0)),
+        "min_seconds": float(gap_configuration.get("min_seconds", 5.0)),
+        "max_seconds": float(gap_configuration.get("max_seconds", 7.0)),
+        "compact_min_seconds": float(gap_configuration.get("compact_min_seconds", 1.0)),
+        "compact_max_seconds": float(gap_configuration.get("compact_max_seconds", 3.0)),
+        "review_profile_min_video_seconds": float(
+            gap_configuration.get("review_profile_min_video_seconds", 60.0)
+        ),
         "context_seconds": float(gap_configuration.get("context_seconds", 2.0)),
     }
 
@@ -32,7 +37,10 @@ def selection_cache_is_compatible(
     ):
         return False
     return all((
-        selection.get("policy") == "distributed_short_evidence_gaps",
+        selection.get("policy") in {
+            "distributed_review_evidence_gaps",
+            "distributed_compact_evidence_gaps",
+        },
         selection.get("source_video_contract") == source_video_contract(video_metadata),
         selection.get("gap_configuration") == gap_cache_configuration(gap_configuration),
     ))

@@ -74,6 +74,10 @@ def _load_scene_builder() -> types.ModuleType:
         "bpy": _bpy_stub(),
         "mathutils": _module_with("mathutils", Vector=object),
         "animation": _module_with("animation", animate_entity=lambda *arguments: None),
+        "evidence_compositor": _module_with(
+            "evidence_compositor",
+            configure_evidence_compositor=lambda *arguments: False,
+        ),
         "environment_builder": _module_with(
             "environment_builder", build_environment=lambda plan: None, build_path_trail=lambda entity: None,
         ),
@@ -82,6 +86,14 @@ def _load_scene_builder() -> types.ModuleType:
         "human_builder": _module_with("human_builder", build_human=lambda entity: None),
         "render_device": _module_with(
             "render_device", CYCLES_RENDER_ENGINE="CYCLES", configure_cycles_render=lambda *arguments: [],
+        ),
+        "render_passes": _module_with(
+            "render_passes",
+            ACTOR_PASS_INDEX=2,
+            ENVIRONMENT_PASS_INDEX=1,
+            HUD_PASS_INDEX=4,
+            UNCERTAINTY_PASS_INDEX=3,
+            assign_pass_index=lambda *arguments: None,
         ),
         "vehicle_builder": _module_with("vehicle_builder", build_vehicle=lambda entity: None),
     }

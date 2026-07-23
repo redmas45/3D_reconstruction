@@ -3,6 +3,7 @@ from pathlib import Path
 
 from domain.camera_calibration import build_camera_contract
 from domain.path_prediction import build_entity_prediction, fidelity_tier
+from domain.render_resolution import adaptive_render_scale_percent
 
 
 PLAN_SCHEMA_VERSION = 2
@@ -80,6 +81,7 @@ def _plan_contract(
         "camera": camera,
         "environment": _environment_contract(
             hidden_range[0] - 1, context_frame_path, selected_entities,
+            camera, render_configuration,
         ),
         "render": _render_contract(render_configuration, video),
         "identity_registry": {
@@ -95,7 +97,15 @@ def _environment_contract(
     backplate_frame: int,
     context_frame_path: Path | None,
     rendered_entities: list[dict],
+    camera: dict,
+    render_configuration: dict | None,
 ) -> dict:
+    configured = render_configuration or {}
+    hybrid_enabled = all((
+        bool(configured.get("hybrid_static_backplate", True)),
+        context_frame_path is not None,
+        camera.get("motion_model") == "static_camera",
+    ))
     proxy_profile = "street" if any(
         entity.get("kind") in VEHICLE_CLASSES for entity in rendered_entities
     ) else "neutral"
@@ -108,6 +118,11 @@ def _environment_contract(
         "presentation_mode": True,
         "show_debug_paths": False,
         "proxy_profile": proxy_profile,
+        "hybrid_backplate_enabled": hybrid_enabled,
+        "hybrid_backplate_reason": (
+            "static_camera_visible_evidence"
+            if hybrid_enabled else "dynamic_or_unavailable_visible_evidence"
+        ),
     }
 
 
@@ -135,19 +150,31 @@ def _selection_report(entities: list[dict], selected_entities: list[dict]) -> di
 
 def _render_contract(render_configuration: dict | None, video: dict) -> dict:
     configured = render_configuration or {}
+    scale_percent = adaptive_render_scale_percent(
+        int(video["width"]),
+        int(video["height"]),
+        int(configured.get(
+            "production_scale_percent",
+            DEFAULT_RENDER_CONFIGURATION["production_scale_percent"],
+        )),
+        int(configured.get("minimum_render_long_edge", 960)),
+        int(configured.get("maximum_render_long_edge", 1280)),
+    )
     contract = {
         "engine": str(configured.get("engine", DEFAULT_RENDER_CONFIGURATION["engine"])),
         "preview_scale_percent": int(configured.get(
             "preview_scale_percent", DEFAULT_RENDER_CONFIGURATION["preview_scale_percent"]
         )),
-        "production_scale_percent": int(configured.get(
-            "production_scale_percent", DEFAULT_RENDER_CONFIGURATION["production_scale_percent"]
-        )),
+        "production_scale_percent": scale_percent,
         "target_fps": int(configured.get("target_fps", 10)),
         "checkpoint_frame_batch": int(configured.get("checkpoint_frame_batch", 24)),
         "diagnostic_pose_count": int(configured.get("diagnostic_pose_count", 5)),
         "source_width": int(video["width"]),
         "source_height": int(video["height"]),
+        "minimum_render_long_edge": int(configured.get("minimum_render_long_edge", 960)),
+        "maximum_render_long_edge": int(configured.get("maximum_render_long_edge", 1280)),
+        "production_hud_mode": str(configured.get("production_hud_mode", "minimal")),
+        "hybrid_static_backplate": bool(configured.get("hybrid_static_backplate", True)),
     }
     if contract["engine"] == "CYCLES":
         contract.update({
@@ -248,11 +275,19 @@ def _entity_contract(
         },
         "boundary_evidence": prediction["boundary_evidence"],
         "path_prediction": prediction["path_prediction"],
+        "kinematics": prediction["kinematics"],
         "uncertainty": {
-            "position_radius_meters": round(0.25 + (1.0 - confidence) * 1.2, 4),
+            "position_radius_meters": _uncertainty_radius(
+                confidence, prediction["kinematics"]["duration_seconds"],
+            ),
             "alternative_paths": 0 if confidence >= 0.75 else 2,
         },
     }
+
+
+def _uncertainty_radius(confidence: float, duration_seconds: float) -> float:
+    duration_growth = max(0.0, duration_seconds - 3.0) * 0.12
+    return round(min(2.5, 0.25 + (1.0 - confidence) * 1.2 + duration_growth), 4)
 
 
 def _relevance_score(
@@ -356,3 +391,27 @@ def _validate_entity(entity: dict) -> None:
     waypoints = path_prediction.get("waypoints")
     if not isinstance(waypoints, list) or len(waypoints) < 3:
         raise PlanValidationError("Entity path must contain at least three waypoints")
+    kinematics = entity.get("kinematics")
+    if kinematics is not None:
+        _validate_kinematics(kinematics)
+
+
+def _validate_kinematics(value: object) -> None:
+    if not isinstance(value, dict):
+        raise PlanValidationError("Entity kinematics must be an object")
+    if value.get("model") != "ground_plane_kinematic":
+        raise PlanValidationError("Entity kinematics model is unsupported")
+    positive_fields = (
+        "duration_seconds",
+        "maximum_speed_meters_per_second",
+        "maximum_acceleration_meters_per_second_squared",
+        "maximum_turn_rate_degrees_per_second",
+    )
+    for field_name in positive_fields:
+        field_value = value.get(field_name)
+        if isinstance(field_value, bool) or not isinstance(field_value, (int, float)):
+            raise PlanValidationError(f"Entity kinematics {field_name} must be numeric")
+        if float(field_value) <= 0.0:
+            raise PlanValidationError(f"Entity kinematics {field_name} must be positive")
+    if value.get("ground_contact_required") is not True:
+        raise PlanValidationError("Entity kinematics must require ground contact")

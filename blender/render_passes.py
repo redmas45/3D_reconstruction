@@ -40,9 +40,11 @@ def configure_diagnostic_passes(
     _remove_diagnostic_nodes(node_tree)
     render_layers = node_tree.nodes.new("CompositorNodeRLayers")
     render_layers.name = f"{DIAGNOSTIC_NODE_PREFIX}_RenderLayers"
-    composite = node_tree.nodes.new("CompositorNodeComposite")
-    composite.name = f"{DIAGNOSTIC_NODE_PREFIX}_Composite"
-    node_tree.links.new(render_layers.outputs["Image"], composite.inputs["Image"])
+    composite = _presentation_composite(node_tree)
+    if composite is None:
+        composite = node_tree.nodes.new("CompositorNodeComposite")
+        composite.name = f"{DIAGNOSTIC_NODE_PREFIX}_Composite"
+        node_tree.links.new(render_layers.outputs["Image"], composite.inputs["Image"])
     diagnostic_root = output_directory / "diagnostic_layers"
     _add_index_mask(node_tree, render_layers, diagnostic_root, "environment", ENVIRONMENT_PASS_INDEX)
     _add_index_mask(node_tree, render_layers, diagnostic_root, "actors", ACTOR_PASS_INDEX)
@@ -56,6 +58,16 @@ def configure_diagnostic_passes(
         "layers": ["environment", "actors", "uncertainty", "hud", "depth", "shadow"],
         "directory": str(diagnostic_root),
     }
+
+
+def _presentation_composite(node_tree: bpy.types.NodeTree) -> bpy.types.Node | None:
+    for node in node_tree.nodes:
+        if (
+            node.bl_idname == "CompositorNodeComposite"
+            and node.name.startswith("ReconstructPresentation")
+        ):
+            return node
+    return None
 
 
 def set_diagnostic_output_enabled(scene: bpy.types.Scene, enabled: bool) -> None:

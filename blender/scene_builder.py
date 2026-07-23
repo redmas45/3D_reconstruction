@@ -4,6 +4,7 @@ import bpy
 from mathutils import Vector
 
 from animation import animate_entity
+from evidence_compositor import configure_evidence_compositor
 from environment_builder import build_environment, build_path_trail
 from frame_rate import blender_frame_rate
 from hud import build_hud
@@ -28,6 +29,7 @@ def build_scene(plan: dict) -> bpy.types.Scene:
     clear_scene()
     scene = bpy.context.scene
     configure_render(scene, plan)
+    configure_evidence_compositor(scene, plan)
     camera = build_camera(plan["camera"])
     build_lighting()
     objects_before_environment = set(scene.objects)
@@ -37,7 +39,7 @@ def build_scene(plan: dict) -> bpy.types.Scene:
     for entity in plan["entities"]:
         objects_before_entity = set(scene.objects)
         parts = build_human(entity) if entity["kind"] in RENDERABLE_HUMANS else build_vehicle(entity)
-        animate_entity(parts, entity, plan["frame_count"])
+        animate_entity(parts, entity, plan["frame_count"], float(plan["fps"]))
         if show_debug_paths:
             build_path_trail(entity)
         entity_objects = set(scene.objects) - objects_before_entity
@@ -80,7 +82,9 @@ def configure_render(scene: bpy.types.Scene, plan: dict) -> None:
     scene.render.fps = nominal_fps
     scene.render.fps_base = fps_base
     scene.render.image_settings.file_format = "PNG"
-    scene.render.film_transparent = False
+    scene.render.film_transparent = bool(
+        plan.get("environment", {}).get("hybrid_backplate_enabled", False),
+    )
     scene.world.color = (0.006, 0.010, 0.018)
     scene.render.use_file_extension = True
     scene.view_settings.look = "AgX - Medium High Contrast"

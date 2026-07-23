@@ -2,6 +2,7 @@
 
 import { cancelProcessingJob, deleteProcessingJob, fetchProcessingJobs, uploadVideoJob } from "./api-client.js";
 import { errorMessage, extractFileExtension, formatByteCount, formatDuration } from "./formatters.js";
+import { createGapMarkerTrack, createPresentationView } from "./presentation-view.js";
 
 const SUPPORTED_EXTENSIONS = new Set(["mp4", "mov", "avi", "mkv", "m4v", "webm", "mpeg", "mpg", "wmv"]);
 const THEME_STORAGE_KEY = "reconstruct-theme";
@@ -519,17 +520,25 @@ async function cancelActiveJob(jobId, button) {
 function createOutputCard(job) {
   const card = createElement("article", "output-card");
   const frame = createElement("div", "video-frame");
+  const player = createElement("div", "video-player");
   const video = document.createElement("video");
   video.controls = true;
   video.preload = "metadata";
   video.src = job.output_url;
-  frame.append(video);
+  player.append(video);
+  frame.append(player);
+  if (job.presentation) frame.append(createGapMarkerTrack(job.presentation, video));
   card.append(frame);
   const body = createElement("div", "output-body");
   body.append(createElement("h3", "", job.source_name.replace(/(\.[^.]+)$/, "") + " — reconstructed"));
   const completionDate = job.completed_at ? new Date(job.completed_at).toLocaleString() : "Completed";
   body.append(createElement("p", "output-meta", `${formatByteCount(job.size_bytes)} · ${formatDuration(job.elapsed_seconds)} processing · ${completionDate}`));
-  if (job.reasoning) body.append(createReasoningPanel(job.reasoning));
+  if (job.presentation) body.append(createPresentationView(job.presentation, video));
+  if (job.reasoning) {
+    const audit = createReasoningPanel(job.reasoning);
+    audit.classList.add("technical-audit");
+    body.append(audit);
+  }
   const actions = createElement("div", "output-actions");
   const download = createElement("a", "action-button", "Download video");
   download.href = job.download_url;

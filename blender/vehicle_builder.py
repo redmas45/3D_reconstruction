@@ -10,6 +10,7 @@ VEHICLE_DIMENSIONS = {
     "motorcycle": (0.7, 2.0, 1.1),
     "bicycle": (0.55, 1.8, 1.1),
 }
+WHEEL_RADIUS_METERS = 0.34
 
 
 def build_vehicle(entity: dict) -> dict:
@@ -25,12 +26,14 @@ def build_vehicle(entity: dict) -> dict:
     body.scale = (width * 0.5, length * 0.5, height * 0.5)
     body.data.materials.append(body_material)
     body.parent = root
-    wheels = _build_wheels(width, length, wheel_material, root)
+    wheels, steering_wheels = _build_wheels(width, length, wheel_material, root)
     return {
         "root": root,
         "arms": [],
         "legs": [],
         "wheels": wheels,
+        "steering_wheels": steering_wheels,
+        "wheel_radius": WHEEL_RADIUS_METERS,
         "materials": [body_material, wheel_material],
     }
 
@@ -40,14 +43,28 @@ def _build_wheels(
     length: float,
     material: bpy.types.Material,
     root: bpy.types.Object,
-) -> list[bpy.types.Object]:
-    wheels = []
+) -> tuple[list[bpy.types.Object], list[bpy.types.Object]]:
+    wheels: list[bpy.types.Object] = []
+    steering_wheels: list[bpy.types.Object] = []
     for side in (-1.0, 1.0):
         for longitudinal in (-1.0, 1.0):
-            location = (side * width * 0.52, longitudinal * length * 0.32, 0.34)
-            bpy.ops.mesh.primitive_cylinder_add(vertices=16, radius=0.34, depth=0.18, location=location, rotation=(0.0, 1.5708, 0.0))
+            location = (
+                side * width * 0.52,
+                longitudinal * length * 0.32,
+                WHEEL_RADIUS_METERS,
+            )
+            bpy.ops.mesh.primitive_cylinder_add(
+                vertices=16,
+                radius=WHEEL_RADIUS_METERS,
+                depth=0.18,
+                location=location,
+                rotation=(0.0, 1.5708, 0.0),
+            )
             wheel = bpy.context.object
+            wheel.name = f"{'Front' if longitudinal > 0.0 else 'Rear'}Wheel"
             wheel.data.materials.append(material)
             wheel.parent = root
             wheels.append(wheel)
-    return wheels
+            if longitudinal > 0.0:
+                steering_wheels.append(wheel)
+    return wheels, steering_wheels

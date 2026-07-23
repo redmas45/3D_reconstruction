@@ -151,7 +151,7 @@
     "requires_preview_approval": true,
     "interactive_preview_approval": false,
     "runtime_budget_enabled": true,
-    "maximum_predicted_render_seconds": 2700,
+    "maximum_predicted_render_seconds": 7200,
     "allow_runtime_budget_override": false,
     "max_parallel_gap_renders": 3,
     "gap_render_stall_timeout_seconds": 7200

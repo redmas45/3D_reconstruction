@@ -61,7 +61,7 @@ The default hidden-gap renderer uses headless Blender 4.5 LTS:
 - sparse 6 fps PNG rendering with an adaptive 960–1280-pixel long-edge target and two Cycles samples by default, followed by exact source-FPS and frame-count normalization
 - atomic frame manifests so a rerun skips valid completed PNGs inside an interrupted gap
 - same-render diagnostic environment, actor, uncertainty, HUD, depth, and shadow passes at five review poses
-- a heaviest-gap runtime benchmark and hard 45-minute predicted-runtime gate before remaining gaps begin
+- a heaviest-gap runtime benchmark and hard 120-minute predicted-runtime gate before remaining gaps begin
 
 The UI defaults to `Blender Forensic 3D`; `Fast 2.5D fallback` must be selected explicitly. Blender failures stop a Blender job and never silently substitute 2.5D output.
 
@@ -149,7 +149,7 @@ The notebook installs Blender 4.5 LTS and FFmpeg, verifies PyTorch CUDA for YOLO
 
 Azure values can come from Colab Secrets or from a separately uploaded local `.env`. Colab cannot read a file that remains on the laptop, so the notebook opens an upload picker only when required values are missing. That upload is parsed as bytes in memory, restricted to the three Azure names, and is not copied to the repository, Drive, logs, or reports. A small structured-output probe validates the configured deployment before YOLO or Blender spends significant time.
 
-The notebook accepts one common-format video, renders from fast `/content` storage, checkpoints completed PNG frames and complete gaps to Google Drive, and saves reports/video under `MyDrive/3D_Reconstruction`. It renders the predicted heaviest gap first, records the measured and projected runtime, rejects a projection above 45 minutes, and shows the representative gap for explicit `APPROVE` confirmation before starting the rest. Re-running resumes the saved representative gap and compatible sparse frames. After completion it creates a small 24 fps judge preview and opens the same presentation dashboard through Colab's authenticated loopback proxy. The dashboard combines video gap markers, whole-video story, visible clues, observed/inferred/observed gap cards, calibration confidence, event beats, selected hypotheses, rejected alternatives, evidence references, and unknowns; the full-quality result stays in Drive and remains available for download. Push local changes to `main` before starting so the clone uses this code.
+The notebook accepts one common-format video, renders from fast `/content` storage, checkpoints completed PNG frames and complete gaps to Google Drive, and saves reports/video under `MyDrive/3D_Reconstruction`. It renders the predicted heaviest gap first, records the measured and projected runtime, rejects a projection above 120 minutes, and shows the representative gap for explicit `APPROVE` confirmation before starting the rest. Re-running resumes the saved representative gap and compatible sparse frames. After completion it creates a small 24 fps judge preview and opens the same presentation dashboard through Colab's authenticated loopback proxy. The dashboard combines video gap markers, whole-video story, visible clues, observed/inferred/observed gap cards, calibration confidence, event beats, selected hypotheses, rejected alternatives, evidence references, and unknowns; the full-quality result stays in Drive and remains available for download. Push local changes to `main` before starting so the clone uses this code.
 
 The 320×180 Cycles probe verifies device access only; it is not a production-speed benchmark. A two-minute, 30 fps source hides about 30 seconds under the 25% contract, which means roughly 900 reconstructed source frames. The observed 3–4 hour Colab run reaching the T4 session limit shows that the current 75%-scale, 16-sample, source-FPS Cycles profile is not viable as the default full-video path.
 
@@ -215,7 +215,7 @@ The primary settings are in `config/reconstruction_config.json`:
     "production_hud_mode": "minimal",
     "maximum_gpu_workers": 1,
     "runtime_budget_enabled": true,
-    "maximum_predicted_render_seconds": 2700,
+    "maximum_predicted_render_seconds": 7200,
     "max_parallel_gap_renders": 3,
     "gap_render_stall_timeout_seconds": 7200
   }

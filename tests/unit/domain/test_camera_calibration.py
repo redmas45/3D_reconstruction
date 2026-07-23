@@ -9,7 +9,9 @@ sys.path.insert(0, str(PROJECT_ROOT / "src"))
 from domain.camera_calibration import (
     build_camera_contract,
     calibration_confidence,
+    estimate_camera_height,
     estimate_ground_geometry,
+    image_point_to_world,
     robust_height_prior,
 )
 
@@ -70,6 +72,44 @@ class CameraCalibrationTests(unittest.TestCase):
         self.assertTrue(report["supported"])
         self.assertAlmostEqual(200 / 480, report["horizon_normalized_y"], places=3)
         self.assertGreater(report["confidence"], 0.9)
+
+    def test_camera_height_uses_visible_vertical_geometry(self) -> None:
+        horizon_pixels = 200
+        detections = []
+        for bottom in range(260, 361, 20):
+            top = horizon_pixels + round((bottom - horizon_pixels) * 0.5)
+            detections.append({
+                "bbox": [200, top, 240, bottom],
+                "confidence": 0.9,
+            })
+
+        report = estimate_camera_height(
+            [{"class_name": "person", "detections": detections}],
+            horizon_pixels / 480,
+            640,
+            480,
+        )
+
+        self.assertTrue(report["supported"])
+        self.assertAlmostEqual(3.44, report["height_meters"], places=2)
+
+    def test_pinhole_mapping_places_higher_ground_points_farther_away(self) -> None:
+        contract = build_camera_contract({
+            "video": {"width": 1280, "height": 720},
+            "tracks": [],
+            "camera_motion_report": {
+                "classification": "static_camera",
+                "static_feature_inlier_score": 0.9,
+                "camera_motion_fit_score": 0.9,
+            },
+        })
+
+        near_point = image_point_to_world(640, 650, 1280, 720, contract)
+        far_point = image_point_to_world(640, 360, 1280, 720, contract)
+
+        self.assertEqual("pinhole_ground_plane_v2", contract["projection_model"])
+        self.assertGreater(far_point[1], near_point[1])
+        self.assertAlmostEqual(0.0, near_point[0], places=3)
 
 
 if __name__ == "__main__":

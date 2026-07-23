@@ -1,6 +1,8 @@
 from dataclasses import dataclass
 from statistics import median
 
+from domain.camera_projection import camera_pose, image_point_to_world
+
 
 MINIMUM_HEIGHT_OBSERVATIONS = 5
 HEIGHT_MAD_MULTIPLIER = 3.0
@@ -8,6 +10,10 @@ MAXIMUM_STABLE_HEIGHT_SPREAD = 0.15
 MINIMUM_GROUND_FIT_OBSERVATIONS = 8
 MINIMUM_NORMALIZED_HEIGHT_SPREAD = 0.04
 MAXIMUM_GROUND_FIT_RESIDUAL = 0.06
+ASSUMED_PERSON_HEIGHT_METERS = 1.72
+MINIMUM_CAMERA_HEIGHT_METERS = 1.1
+MAXIMUM_CAMERA_HEIGHT_METERS = 12.0
+MINIMUM_CAMERA_HEIGHT_OBSERVATIONS = 5
 SUPPORTED_CONFIDENCE_THRESHOLD = 0.75
 REVIEW_CONFIDENCE_THRESHOLD = 0.50
 CALIBRATION_WEIGHTS = {
@@ -93,6 +99,27 @@ def build_camera_contract(scene_report: dict, settings: GroundCalibration | None
     motion_model = motion_report.get("classification", "unclassified")
     confidence = _motion_adjusted_confidence(confidence, motion_model)
     geometry_supported = ground_fit["supported"]
+    horizon_normalized_y = (
+        ground_fit["horizon_normalized_y"]
+        if geometry_supported else calibration.horizon_normalized_y
+    )
+    camera_height_report = estimate_camera_height(
+        scene_report.get("tracks", []),
+        float(horizon_normalized_y),
+        int(video["width"]),
+        int(video["height"]),
+    )
+    camera_height_meters = (
+        camera_height_report["height_meters"]
+        if camera_height_report["supported"] else calibration.camera_height_meters
+    )
+    camera_pose_contract = camera_pose(
+        camera_height_meters,
+        float(horizon_normalized_y),
+        calibration.field_of_view_degrees,
+        int(video["width"]),
+        int(video["height"]),
+    )
     presentation_mode = (
         "source_camera_aligned"
         if motion_model == "static_camera"
@@ -113,14 +140,13 @@ def build_camera_contract(scene_report: dict, settings: GroundCalibration | None
         },
         "calibration_confidence": confidence["score"],
         "calibration_report": confidence,
-        "focal_length_mm": 32.0,
-        "position": [0.0, -2.0, calibration.camera_height_meters],
-        "look_at": [0.0, 9.0, 1.0],
-        "horizon_normalized_y": (
-            ground_fit["horizon_normalized_y"]
-            if geometry_supported else calibration.horizon_normalized_y
-        ),
+        "projection_model": "pinhole_ground_plane_v2",
+        "focal_length_mm": camera_pose_contract["focal_length_mm"],
+        "position": camera_pose_contract["position"],
+        "look_at": camera_pose_contract["look_at"],
+        "horizon_normalized_y": horizon_normalized_y,
         "field_of_view_degrees": calibration.field_of_view_degrees,
+        "camera_height_report": camera_height_report,
         "height_prior": height_prior,
         "camera_motion_report": motion_report,
         "ground_fit_report": ground_fit,
@@ -165,23 +191,82 @@ def estimate_ground_geometry(tracks: list[dict], frame_width: int, frame_height:
     }
 
 
-def image_point_to_world(
-    image_x: float,
-    image_y: float,
+def estimate_camera_height(
+    tracks: list[dict],
+    horizon_normalized_y: float,
     frame_width: int,
     frame_height: int,
-    camera_contract: dict,
-) -> list[float]:
-    mapping = camera_contract["ground_mapping"]
-    normalized_x = (image_x / frame_width) - 0.5
-    normalized_y = image_y / frame_height
-    denominator = max(0.01, mapping["near_y"] - mapping["far_y"])
-    depth_ratio = _clamp((mapping["near_y"] - normalized_y) / denominator)
-    depth = mapping["near_depth_meters"] + depth_ratio * (
-        mapping["far_depth_meters"] - mapping["near_depth_meters"]
+) -> dict:
+    estimates = _camera_height_estimates(
+        tracks, horizon_normalized_y, frame_width, frame_height,
     )
-    horizontal_span = 5.5 + depth * 0.42
-    return [round(normalized_x * horizontal_span, 4), round(depth, 4), 0.0]
+    if len(estimates) < MINIMUM_CAMERA_HEIGHT_OBSERVATIONS:
+        return _unsupported_camera_height(len(estimates))
+    center = median(estimates)
+    deviation = _median_absolute_deviation(estimates, center)
+    filtered = _mad_filter(estimates, center, deviation)
+    if len(filtered) < MINIMUM_CAMERA_HEIGHT_OBSERVATIONS:
+        return _unsupported_camera_height(len(filtered))
+    filtered_center = median(filtered)
+    relative_spread = (
+        _median_absolute_deviation(filtered, filtered_center) / filtered_center
+        if filtered_center else 1.0
+    )
+    return {
+        "supported": relative_spread <= MAXIMUM_STABLE_HEIGHT_SPREAD,
+        "observation_count": len(filtered),
+        "height_meters": round(filtered_center, 4),
+        "relative_spread": round(relative_spread, 4),
+        "source": "visible_person_vertical_geometry",
+    }
+
+
+def _camera_height_estimates(
+    tracks: list[dict],
+    horizon_normalized_y: float,
+    frame_width: int,
+    frame_height: int,
+) -> list[float]:
+    estimates: list[float] = []
+    for track in tracks:
+        if track.get("class_name") != "person":
+            continue
+        for detection in track.get("detections", []):
+            bbox = detection.get("bbox", [])
+            if not _eligible_bbox(bbox, detection, frame_width, frame_height):
+                continue
+            _, top, _, bottom = [float(value) for value in bbox]
+            horizon_pixels = horizon_normalized_y * frame_height
+            ground_distance = bottom - horizon_pixels
+            if ground_distance <= frame_height * 0.03:
+                continue
+            top_ratio = (top - horizon_pixels) / ground_distance
+            denominator = 1.0 - top_ratio
+            if denominator <= 0.0:
+                continue
+            estimate = ASSUMED_PERSON_HEIGHT_METERS / denominator
+            if MINIMUM_CAMERA_HEIGHT_METERS <= estimate <= MAXIMUM_CAMERA_HEIGHT_METERS:
+                estimates.append(estimate)
+    return estimates
+
+
+def _mad_filter(values: list[float], center: float, deviation: float) -> list[float]:
+    if deviation == 0.0:
+        return [value for value in values if value == center]
+    return [
+        value for value in values
+        if abs(value - center) <= HEIGHT_MAD_MULTIPLIER * deviation
+    ]
+
+
+def _unsupported_camera_height(observation_count: int) -> dict:
+    return {
+        "supported": False,
+        "observation_count": observation_count,
+        "height_meters": None,
+        "relative_spread": None,
+        "source": "default_camera_height",
+    }
 
 
 def _eligible_heights(detections: list[dict], frame_width: int, frame_height: int) -> list[float]:

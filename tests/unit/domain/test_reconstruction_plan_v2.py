@@ -84,7 +84,7 @@ class ReconstructionPlanV2Tests(unittest.TestCase):
         self.assertEqual(boundary_only_score, score)
         self.assertEqual(0.24, score)
 
-    def test_environment_uses_street_proxies_only_for_rendered_vehicle(self) -> None:
+    def test_environment_never_invents_street_buildings_for_vehicles(self) -> None:
         person_plan = _build_plan(100, 100, [_track("person_1", [_detection(8), _detection(9)])])
         vehicle_plan = _build_plan(
             100,
@@ -93,7 +93,32 @@ class ReconstructionPlanV2Tests(unittest.TestCase):
         )
 
         self.assertEqual("neutral", person_plan["environment"]["proxy_profile"])
-        self.assertEqual("street", vehicle_plan["environment"]["proxy_profile"])
+        self.assertEqual("neutral", vehicle_plan["environment"]["proxy_profile"])
+
+    def test_dynamic_camera_uses_stabilized_visible_backplate(self) -> None:
+        plan = _build_plan(
+            100,
+            100,
+            [_track("person_1", [_detection(8), _detection(9)])],
+            context_frame_path=Path(__file__),
+        )
+
+        self.assertTrue(plan["environment"]["hybrid_backplate_enabled"])
+        self.assertEqual(
+            "stabilized_visible_boundary_for_dynamic_camera",
+            plan["environment"]["hybrid_backplate_reason"],
+        )
+
+    def test_overlapping_duplicate_tracks_are_suppressed(self) -> None:
+        tracks = [
+            _track("person_primary", [_detection(8), _detection(9)]),
+            _track("person_duplicate", [_detection(8), _detection(9)]),
+        ]
+
+        plan = _build_plan(100, 100, tracks)
+
+        self.assertEqual(1, len(plan["entities"]))
+        self.assertEqual(2, plan["selection_report"]["candidate_count"])
 
 
 def _build_plan(
@@ -102,6 +127,7 @@ def _build_plan(
     tracks: list[dict],
     likely_gap_entities: dict[str, list[str]] | None = None,
     render_configuration: dict | None = None,
+    context_frame_path: Path | None = None,
 ) -> dict:
     scene_report = {
         "video": {"width": width, "height": height, "fps": FRAME_RATE, "frames": 120},
@@ -118,6 +144,7 @@ def _build_plan(
         _identity_registry(tracks),
         HIDDEN_RANGE,
         gap_index=0,
+        context_frame_path=context_frame_path,
         render_configuration=render_configuration,
     )
 

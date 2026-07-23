@@ -18,6 +18,7 @@ from render_passes import (
     assign_pass_index,
 )
 from vehicle_builder import build_vehicle
+from visual_alignment import align_entity_scale
 
 
 RENDERABLE_HUMANS = {"person"}
@@ -39,6 +40,7 @@ def build_scene(plan: dict) -> bpy.types.Scene:
     for entity in plan["entities"]:
         objects_before_entity = set(scene.objects)
         parts = build_human(entity) if entity["kind"] in RENDERABLE_HUMANS else build_vehicle(entity)
+        align_entity_scale(parts, entity, scene, camera)
         animate_entity(parts, entity, plan["frame_count"], float(plan["fps"]))
         if show_debug_paths:
             build_path_trail(entity)

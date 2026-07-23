@@ -50,6 +50,25 @@ class ProcessingJobViewTests(unittest.TestCase):
             self.assertEqual("Visible motion continued.", reasoning["whole_video_summary"])
             self.assertEqual("person_1", reasoning["decisions"][0]["entities"][0]["entity_id"])
 
+    def test_exposes_schema_v2_judge_presentation(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            output_directory = Path(temporary_directory) / "job"
+            manifest_path = (
+                output_directory / "_work" / "video_digest" / "presentation_manifest.json"
+            )
+            manifest_path.parent.mkdir(parents=True)
+            manifest_path.write_text(
+                json.dumps(_presentation_manifest()), encoding="utf-8",
+            )
+
+            presentation = build_public_job_record(
+                _job_record(output_directory),
+            )["presentation"]
+
+            self.assertIsNotNone(presentation)
+            self.assertEqual(2, presentation["schema_version"])
+            self.assertEqual(6.0, presentation["gaps"][0]["duration_seconds"])
+
 
 def _job_record(output_directory: Path) -> ProcessingJob:
     return ProcessingJob(
@@ -129,6 +148,53 @@ def _story_v2_summary() -> dict:
             }],
             "event_beats": [],
         }],
+    }
+
+
+def _presentation_manifest() -> dict:
+    return {
+        "schema_version": 2,
+        "status": "completed",
+        "title": "AI-inferred evidence reconstruction",
+        "disclosure": "Inferred intervals are not recovered ground truth.",
+        "source": {
+            "duration_seconds": 120.0,
+            "fps": 20.0,
+            "width": 1280,
+            "height": 720,
+            "observed_fraction": 0.75,
+        },
+        "story": {
+            "headline": "Visible motion continued",
+            "summary": "Boundary evidence supports continued movement.",
+            "confidence": 0.8,
+            "causal_link_supported": False,
+            "points": ["A person continued moving."],
+        },
+        "top_clues": [{
+            "id": "motion",
+            "category": "motion",
+            "statement": "Movement was visible before the gap.",
+            "confidence": 0.8,
+        }],
+        "gaps": [{
+            "gap_index": 0,
+            "start_frame": 200,
+            "end_frame": 319,
+            "start_seconds": 10.0,
+            "end_seconds": 16.0,
+            "duration_seconds": 6.0,
+            "confidence": 0.8,
+            "entity_count": 1,
+            "calibration_confidence": 0.7,
+            "before_observed": "Person visible before.",
+            "inside_inferred": "Movement continued.",
+            "after_observed": "Person visible after.",
+            "unknowns": ["Exact pose."],
+            "clue_ids": ["motion"],
+        }],
+        "render": {"engine": "CYCLES"},
+        "output": {"filename": "result.mp4"},
     }
 
 

@@ -6,7 +6,7 @@ from materials import confidence_color, create_material
 VEHICLE_DIMENSIONS = {
     "car": (1.75, 3.8, 1.25),
     "truck": (2.2, 5.6, 1.8),
-    "bus": (2.4, 8.0, 2.8),
+    "bus": (2.4, 5.2, 2.5),
     "motorcycle": (0.7, 2.0, 1.1),
     "bicycle": (0.55, 1.8, 1.1),
 }
@@ -35,6 +35,7 @@ def build_vehicle(entity: dict) -> dict:
         "steering_wheels": steering_wheels,
         "wheel_radius": WHEEL_RADIUS_METERS,
         "materials": [body_material, wheel_material],
+        "visual_height_meters": height,
     }
 
 

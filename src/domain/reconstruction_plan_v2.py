@@ -9,12 +9,11 @@ from domain.render_resolution import adaptive_render_scale_percent
 PLAN_SCHEMA_VERSION = 2
 PLAN_STRATEGY = "ai_inferred_forensic_3d"
 RENDERABLE_CLASSES = {"person", "car", "truck", "bus", "motorcycle", "bicycle"}
-VEHICLE_CLASSES = {"car", "truck", "bus", "motorcycle", "bicycle"}
-DEFAULT_MAX_RENDER_ENTITIES = 12
-MINIMUM_PRESENTATION_CONFIDENCE = 0.40
-MINIMUM_PRESENTATION_RELEVANCE = 0.10
-MAXIMUM_WEAK_PRESENTATION_ENTITIES = 1
-MINIMUM_WEAK_PRESENTATION_DEPTH_METERS = 4.5
+DEFAULT_MAX_RENDER_ENTITIES = 5
+MINIMUM_PRESENTATION_CONFIDENCE = 0.45
+MINIMUM_PRESENTATION_RELEVANCE = 0.12
+MAXIMUM_WEAK_PRESENTATION_ENTITIES = 0
+MAXIMUM_DUPLICATE_BOUNDARY_IOU = 0.55
 LIFECYCLE_FACTORS = {"continuous": 1.0, "enters": 0.75, "exits": 0.75, "uncertain": 0.50}
 DEFAULT_RENDER_CONFIGURATION = {
     "engine": "BLENDER_EEVEE_NEXT",
@@ -104,11 +103,7 @@ def _environment_contract(
     hybrid_enabled = all((
         bool(configured.get("hybrid_static_backplate", True)),
         context_frame_path is not None,
-        camera.get("motion_model") == "static_camera",
     ))
-    proxy_profile = "street" if any(
-        entity.get("kind") in VEHICLE_CLASSES for entity in rendered_entities
-    ) else "neutral"
     return {
         "style": "forensic_3d",
         "ground_color": [0.035, 0.047, 0.062],
@@ -117,11 +112,11 @@ def _environment_contract(
         "context_frame_path": str(context_frame_path.resolve()) if context_frame_path else None,
         "presentation_mode": True,
         "show_debug_paths": False,
-        "proxy_profile": proxy_profile,
+        "proxy_profile": "neutral",
         "hybrid_backplate_enabled": hybrid_enabled,
         "hybrid_backplate_reason": (
-            "static_camera_visible_evidence"
-            if hybrid_enabled else "dynamic_or_unavailable_visible_evidence"
+            _backplate_reason(camera)
+            if hybrid_enabled else "visible_boundary_frame_unavailable"
         ),
     }
 
@@ -194,11 +189,8 @@ def _render_contract(render_configuration: dict | None, video: dict) -> dict:
 def _exclusion_reason(entity: dict) -> str:
     if entity["relevance_score"] < MINIMUM_PRESENTATION_RELEVANCE:
         return "below_relevance_threshold"
-    midpoint_depth = entity["path_prediction"]["waypoints"][1]["world"][1]
     if entity["confidence"] < MINIMUM_PRESENTATION_CONFIDENCE:
-        if midpoint_depth < MINIMUM_WEAK_PRESENTATION_DEPTH_METERS:
-            return "weak_foreground_readability"
-        return "weak_entity_budget"
+        return "below_confidence_threshold"
     return "presentation_cap"
 
 
@@ -257,6 +249,7 @@ def _entity_contract(
         track, prediction["lifecycle"], confidence, video, hidden_range,
     )
     speed = prediction["speed_meters_per_second"]
+    visual_anchor = _visual_anchor(track, hidden_range, video)
     return {
         "id": track["id"],
         "identity_registry_id": track["id"],
@@ -268,6 +261,7 @@ def _entity_contract(
         "appearance": identity["appearance"],
         "body_proportions": identity["body_proportions"],
         "associated_objects": identity["associated_objects"],
+        "visual_anchor": visual_anchor,
         "animation": {
             "state": "idle" if speed < 0.15 else "walk",
             "speed_meters_per_second": speed,
@@ -366,25 +360,82 @@ def _select_presentation_entities(entities: list[dict], maximum_entities: int) -
         if entity["confidence"] >= MINIMUM_PRESENTATION_CONFIDENCE
         and entity["relevance_score"] >= MINIMUM_PRESENTATION_RELEVANCE
     ]
-    weak_entities = [
+    weak_entities = [] if MAXIMUM_WEAK_PRESENTATION_ENTITIES == 0 else [
         entity for entity in ranked_entities
         if entity not in supported_entities
         and entity["relevance_score"] >= MINIMUM_PRESENTATION_RELEVANCE
-        and entity["path_prediction"]["waypoints"][1]["world"][1]
-        >= MINIMUM_WEAK_PRESENTATION_DEPTH_METERS
     ][:MAXIMUM_WEAK_PRESENTATION_ENTITIES]
     selected_ids = {entity["id"] for entity in supported_entities + weak_entities}
-    return [entity for entity in ranked_entities if entity["id"] in selected_ids][:maximum_entities]
+    selected = [entity for entity in ranked_entities if entity["id"] in selected_ids]
+    return _without_boundary_duplicates(selected)[:maximum_entities]
+
+
+def _visual_anchor(
+    track: dict,
+    hidden_range: tuple[int, int],
+    video: dict,
+) -> dict:
+    detection = _closest_boundary_detection(track, hidden_range)
+    x1, y1, x2, y2 = [float(value) for value in detection["bbox"]]
+    width = max(1.0, float(video["width"]))
+    height = max(1.0, float(video["height"]))
+    return {
+        "bbox": [round(x1, 3), round(y1, 3), round(x2, 3), round(y2, 3)],
+        "center_x_fraction": round(((x1 + x2) * 0.5) / width, 5),
+        "ground_y_fraction": round(y2 / height, 5),
+        "width_fraction": round(max(1.0, x2 - x1) / width, 5),
+        "height_fraction": round(max(1.0, y2 - y1) / height, 5),
+        "source_frame": int(detection.get("frame", hidden_range[0] - 1)),
+    }
+
+
+def _without_boundary_duplicates(entities: list[dict]) -> list[dict]:
+    retained: list[dict] = []
+    for entity in entities:
+        if any(_entities_overlap(entity, existing) for existing in retained):
+            continue
+        retained.append(entity)
+    return retained
+
+
+def _entities_overlap(first: dict, second: dict) -> bool:
+    if first["kind"] != second["kind"] or first["lifecycle"] != second["lifecycle"]:
+        return False
+    first_bbox = first.get("visual_anchor", {}).get("bbox", [])
+    second_bbox = second.get("visual_anchor", {}).get("bbox", [])
+    return _intersection_over_union(first_bbox, second_bbox) > MAXIMUM_DUPLICATE_BOUNDARY_IOU
+
+
+def _intersection_over_union(first: list, second: list) -> float:
+    if len(first) != 4 or len(second) != 4:
+        return 0.0
+    intersection_width = max(0.0, min(first[2], second[2]) - max(first[0], second[0]))
+    intersection_height = max(0.0, min(first[3], second[3]) - max(first[1], second[1]))
+    intersection = intersection_width * intersection_height
+    first_area = max(0.0, first[2] - first[0]) * max(0.0, first[3] - first[1])
+    second_area = max(0.0, second[2] - second[0]) * max(0.0, second[3] - second[1])
+    union = first_area + second_area - intersection
+    return intersection / union if union > 0.0 else 0.0
+
+
+def _backplate_reason(camera: dict) -> str:
+    if camera.get("motion_model") == "static_camera":
+        return "static_camera_visible_evidence"
+    return "stabilized_visible_boundary_for_dynamic_camera"
 
 
 def _validate_entity(entity: dict) -> None:
-    required_fields = {"id", "kind", "confidence", "fidelity_tier", "lifecycle", "path_prediction"}
+    required_fields = {
+        "id", "kind", "confidence", "fidelity_tier", "lifecycle",
+        "path_prediction", "visual_anchor",
+    }
     if not required_fields.issubset(entity):
         raise PlanValidationError(f"Entity is missing required fields: {sorted(required_fields - set(entity))}")
     if entity["kind"] not in RENDERABLE_CLASSES:
         raise PlanValidationError(f"Entity kind is unsupported: {entity['kind']}")
     if not 0.0 <= float(entity["confidence"]) <= 1.0:
         raise PlanValidationError("Entity confidence is invalid")
+    _validate_visual_anchor(entity["visual_anchor"])
     path_prediction = entity["path_prediction"]
     if path_prediction.get("method") != "centripetal_catmull_rom":
         raise PlanValidationError("Entity path method must be centripetal_catmull_rom")
@@ -394,6 +445,22 @@ def _validate_entity(entity: dict) -> None:
     kinematics = entity.get("kinematics")
     if kinematics is not None:
         _validate_kinematics(kinematics)
+
+
+def _validate_visual_anchor(value: object) -> None:
+    if not isinstance(value, dict):
+        raise PlanValidationError("Entity visual anchor must be an object")
+    fractions = ("center_x_fraction", "ground_y_fraction", "width_fraction", "height_fraction")
+    if any(
+        not isinstance(value.get(field), (int, float))
+        or isinstance(value.get(field), bool)
+        or not 0.0 <= float(value[field]) <= 1.0
+        for field in fractions
+    ):
+        raise PlanValidationError("Entity visual anchor fractions are invalid")
+    bbox = value.get("bbox")
+    if not isinstance(bbox, list) or len(bbox) != 4:
+        raise PlanValidationError("Entity visual anchor bounding box is invalid")
 
 
 def _validate_kinematics(value: object) -> None:

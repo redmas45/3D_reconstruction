@@ -19,7 +19,6 @@ def build_human(entity: dict) -> dict:
         _leg(root, -1.0, height_scale, materials),
         _leg(root, 1.0, height_scale, materials),
     ]
-    ring_material = _add_confidence_ring(entity, root)
     return {
         "root": root,
         "arms": arms,
@@ -27,7 +26,8 @@ def build_human(entity: dict) -> dict:
         "wheels": [],
         "steering_wheels": [],
         "wheel_radius": None,
-        "materials": [*materials.values(), ring_material],
+        "materials": list(materials.values()),
+        "visual_height_meters": 1.98 * height_scale,
     }
 
 
@@ -82,9 +82,18 @@ def _build_silhouette(entity: dict, height_scale: float) -> dict:
         f"Weak_{entity['id']}", confidence_color(entity["confidence"]), alpha=0.40
     )
     root = _empty(f"Human_{entity['id']}", None, (0.0, 0.0, 0.0))
-    _cylinder("UncertainPresence", (0.0, 0.0, 0.90 * height_scale), 0.18, 1.42, material, root)
+    bpy.ops.mesh.primitive_cone_add(
+        vertices=12,
+        radius1=0.22 * height_scale,
+        radius2=0.14 * height_scale,
+        depth=1.28 * height_scale,
+    )
+    presence = bpy.context.object
+    presence.name = "UncertainPresence"
+    presence.location = (0.0, 0.0, 0.78 * height_scale)
+    presence.data.materials.append(material)
+    presence.parent = root
     _sphere("UncertainHead", (0.0, 0.0, 1.75 * height_scale), 0.17, material, root)
-    ring_material = _add_confidence_ring(entity, root)
     return {
         "root": root,
         "arms": [],
@@ -92,7 +101,8 @@ def _build_silhouette(entity: dict, height_scale: float) -> dict:
         "wheels": [],
         "steering_wheels": [],
         "wheel_radius": None,
-        "materials": [material, ring_material],
+        "materials": [material],
+        "visual_height_meters": 1.92 * height_scale,
     }
 
 
@@ -121,7 +131,6 @@ def _cube(
     part.data.materials.append(material)
     part.parent = parent
     return part
-
 
 def _sphere(
     name: str,
@@ -154,17 +163,3 @@ def _cylinder(
     part.data.materials.append(material)
     part.parent = parent
     return part
-
-
-def _add_confidence_ring(entity: dict, root: bpy.types.Object) -> bpy.types.Material:
-    radius = 0.48 + entity["uncertainty"]["position_radius_meters"] * 0.16
-    bpy.ops.mesh.primitive_torus_add(major_radius=radius, minor_radius=0.018, major_segments=32)
-    ring = bpy.context.object
-    ring.name = f"Confidence_{entity['id']}"
-    ring.location = (0.0, 0.0, 0.025)
-    ring_material = create_material(
-        f"ConfidenceMaterial_{entity['id']}", confidence_color(entity["confidence"]), alpha=0.58
-    )
-    ring.data.materials.append(ring_material)
-    ring.parent = root
-    return ring_material

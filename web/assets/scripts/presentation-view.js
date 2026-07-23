@@ -1,5 +1,12 @@
 // @ts-check
 
+const FRAME_CAPTURE_WIDTH = 640;
+const FRAME_CAPTURE_HEIGHT = 360;
+const BOUNDARY_REVIEW_OFFSET_SECONDS = 0.15;
+const MAXIMUM_VISIBLE_STORY_POINTS = 3;
+const MAXIMUM_VISIBLE_CLUES = 3;
+
+
 /**
  * @param {import("./api-client.js").PresentationManifest} presentation
  * @param {HTMLVideoElement} video
@@ -16,12 +23,9 @@ export function createGapMarkerTrack(presentation, video) {
     marker.type = "button";
     marker.style.left = `${gap.start_seconds / duration * 100}%`;
     marker.style.width = `${Math.max(0.7, gap.duration_seconds / duration * 100)}%`;
-    marker.title = `Review reconstructed gap ${gap.gap_index + 1} at ${formatTime(gap.start_seconds)}`;
+    marker.title = `Review gap ${gap.gap_index + 1} at ${formatTime(gap.start_seconds)}`;
     marker.setAttribute("aria-label", marker.title);
-    marker.addEventListener("click", () => {
-      video.currentTime = gap.start_seconds;
-      void video.play();
-    });
+    marker.addEventListener("click", () => seekVideo(video, gap.start_seconds));
     track.append(marker);
   });
   return track;
@@ -37,8 +41,7 @@ export function createPresentationView(presentation, video) {
   const view = createElement("div", "presentation-view");
   view.append(
     createStory(presentation),
-    createClues(presentation),
-    createGapReview(presentation, video),
+    createGapWorkspace(presentation, video),
   );
   return view;
 }
@@ -50,21 +53,19 @@ export function createPresentationView(presentation, video) {
  */
 function createStory(presentation) {
   const section = createElement("section", "presentation-story");
+  const heading = createElement("div", "presentation-section-heading");
+  heading.append(
+    createElement("span", "presentation-kicker", "Evidence-grounded finding"),
+    createElement("span", "confidence-pill", confidenceLabel(presentation.story.confidence)),
+  );
   section.append(
-    createElement("span", "presentation-kicker", "Evidence-grounded story"),
+    heading,
     createElement("h4", "", presentation.story.headline),
     createElement("p", "presentation-summary", presentation.story.summary),
+    createStoryMetrics(presentation),
   );
-  section.append(createStoryPoints(presentation.story.points || []));
-  const metrics = createElement("div", "presentation-metrics");
-  metrics.append(
-    createMetric(`${Math.round(presentation.story.confidence * 100)}%`, "story confidence"),
-    createMetric(`${Math.round(presentation.source.observed_fraction * 100)}%`, "visible evidence"),
-    createMetric(String(presentation.gaps.length), "reconstructed gaps"),
-    createMetric(presentation.render.engine || "3D", "render engine"),
-  );
-  section.append(metrics);
-  section.append(createProvenance(presentation));
+  const points = createVisibleStoryPoints(presentation);
+  if (points.childElementCount) section.append(points);
   if (presentation.story.warning) {
     section.append(createElement("p", "presentation-warning", presentation.story.warning));
   }
@@ -73,252 +74,308 @@ function createStory(presentation) {
 }
 
 
-function createStoryPoints(points) {
-  const list = createElement("ul", "presentation-story-points");
-  points.slice(0, 5).forEach((point) => {
-    list.append(createElement("li", "", point));
-  });
-  return list;
-}
-
-
-function createProvenance(presentation) {
-  const provenance = createElement("div", "presentation-provenance");
-  provenance.append(
-    createBadge(`Planner · ${humanize(presentation.story.planning_mode || "unknown")}`),
-    createBadge(`Model · ${presentation.story.deployment || "not reported"}`),
-    createBadge(`Render · ${presentation.render.target_fps || "source"} fps`),
-    createBadge(
-      presentation.render.hybrid_static_backplate ? "Evidence backplate · on" : "Evidence backplate · off",
-    ),
-  );
-  return provenance;
-}
-
-
-function createBadge(label) {
-  return createElement("span", "presentation-badge", label);
-}
-
-
-/**
- * @param {import("./api-client.js").PresentationManifest} presentation
- * @returns {HTMLElement}
- */
-function createClues(presentation) {
-  const section = createElement("section", "presentation-clues");
-  section.append(createElement("h4", "", "Strongest visible clues"));
-  const list = createElement("ol", "");
-  presentation.top_clues.slice(0, 5).forEach((clue) => {
-    const item = createElement("li");
-    const statement = createElement("span", "", clue.statement);
-    const confidence = createElement(
-      "small", "", `${Math.round(clue.confidence * 100)}%`,
-    );
-    item.append(statement, confidence);
-    list.append(item);
-  });
-  if (!presentation.top_clues.length) {
-    list.append(createElement("li", "empty-clue", "No ranked clue was available."));
-  }
-  section.append(list);
-  return section;
-}
-
-
-/**
- * @param {import("./api-client.js").PresentationManifest} presentation
- * @param {HTMLVideoElement} video
- * @returns {HTMLElement}
- */
-function createGapReview(presentation, video) {
-  const section = createElement("section", "presentation-gaps");
-  section.append(createElement("h4", "", "Review reconstructed intervals"));
-  presentation.gaps.forEach((gap) => section.append(createGapCard(gap, video)));
-  return section;
-}
-
-
-/**
- * @param {import("./api-client.js").PresentationGap} gap
- * @param {HTMLVideoElement} video
- * @returns {HTMLElement}
- */
-function createGapCard(gap, video) {
-  const card = createElement("article", "presentation-gap-card");
-  card.append(createGapHeader(gap, video), createGapMetrics(gap));
-  const phases = createElement("div", "presentation-gap-phases");
-  phases.append(
-    createPhase("Before · observed", gap.before_observed),
-    createPhase("Inside · inferred", gap.inside_inferred, true),
-    createPhase("After · observed", gap.after_observed),
-  );
-  card.append(phases, createDecisionTrace(gap));
-  return card;
-}
-
-
-function createGapHeader(gap, video) {
-  const header = createElement("div", "presentation-gap-heading");
-  const seek = /** @type {HTMLButtonElement} */ (
-    createElement(
-      "button",
-      "gap-seek",
-      `Gap ${gap.gap_index + 1} · ${formatTime(gap.start_seconds)} · ${gap.duration_seconds.toFixed(1)}s`,
-    )
-  );
-  seek.type = "button";
-  seek.addEventListener("click", () => {
-    video.currentTime = gap.start_seconds;
-    void video.play();
-  });
-  header.append(
-    seek,
-    createElement("span", "", `${Math.round(gap.confidence * 100)}% confidence`),
-  );
-  return header;
-}
-
-
-function createGapMetrics(gap) {
-  const clues = gap.clues || [];
-  const metrics = createElement("div", "presentation-gap-metrics");
+function createStoryMetrics(presentation) {
+  const metrics = createElement("div", "presentation-metrics");
+  const reconstructedFraction = presentation.output?.reconstructed_fraction
+    ?? 1 - presentation.source.observed_fraction;
   metrics.append(
-    createMetric(String(gap.entity_count ?? 0), "supported entities"),
-    createMetric(
-      `${Math.round((gap.calibration_confidence || 0) * 100)}%`,
-      "calibration confidence",
-    ),
-    createMetric(String(clues.length), "linked clues"),
+    createMetric(`${Math.round(presentation.source.observed_fraction * 100)}%`, "visible evidence"),
+    createMetric(`${Math.round(reconstructedFraction * 100)}%`, "reconstructed"),
+    createMetric(String(presentation.gaps.length), "reviewable gaps"),
   );
   return metrics;
 }
 
 
-function createDecisionTrace(gap) {
-  const details = /** @type {HTMLDetailsElement} */ (
-    createElement("details", "presentation-decision-trace")
+function createVisibleStoryPoints(presentation) {
+  const list = createElement("ul", "presentation-story-points");
+  const storyPoints = presentation.story.points || [];
+  const statements = storyPoints.length
+    ? storyPoints
+    : presentation.top_clues.map((clue) => clue.statement);
+  statements.slice(0, MAXIMUM_VISIBLE_STORY_POINTS).forEach((statement) => {
+    list.append(createElement("li", "", statement));
+  });
+  return list;
+}
+
+
+/**
+ * @param {import("./api-client.js").PresentationManifest} presentation
+ * @param {HTMLVideoElement} video
+ * @returns {HTMLElement}
+ */
+function createGapWorkspace(presentation, video) {
+  const section = createElement("section", "presentation-gap-workspace");
+  const heading = createElement("div", "presentation-section-heading");
+  heading.append(
+    createElement("div", "", ""),
+    createElement("span", "presentation-kicker", "Gap review"),
   );
-  details.open = gap.gap_index === 0;
-  details.append(createElement("summary", "", "Evidence and decision trace"));
-  const content = createElement("div", "presentation-trace-content");
-  content.append(
-    createGapClues(gap.clues || []),
-    createEventBeats(gap.event_beats || []),
-    createEntityDecisions(gap.entities || []),
+  heading.firstElementChild?.append(
+    createElement("h4", "", "Inspect the reconstruction"),
+    createElement("p", "presentation-helper", "Select a gap to compare the evidence boundaries and inferred interval."),
   );
-  if ((gap.evidence_references || []).length) {
-    content.append(createTextList(
-      "Evidence references", gap.evidence_references, "presentation-references",
-    ));
+  const tabs = createElement("div", "gap-selector");
+  tabs.setAttribute("role", "tablist");
+  const detail = createElement("div", "gap-review-detail");
+  const tabButtons = presentation.gaps.map((gap, index) => {
+    const button = createGapTab(gap, index === 0);
+    button.addEventListener("click", () => {
+      setActiveGapTab(tabButtons, button);
+      renderSelectedGap(detail, presentation, gap, video);
+    });
+    tabs.append(button);
+    return button;
+  });
+  section.append(heading, tabs, detail);
+  if (presentation.gaps.length) {
+    renderSelectedGap(detail, presentation, presentation.gaps[0], video);
+  } else {
+    detail.append(createElement("p", "presentation-empty", "No reconstructed interval was published."));
   }
+  return section;
+}
+
+
+function createGapTab(gap, selected) {
+  const button = /** @type {HTMLButtonElement} */ (
+    createElement("button", `gap-tab${selected ? " active" : ""}`)
+  );
+  button.type = "button";
+  button.setAttribute("role", "tab");
+  button.setAttribute("aria-selected", String(selected));
+  button.append(
+    createElement("strong", "", `Gap ${gap.gap_index + 1}`),
+    createElement("span", "", `${formatTime(gap.start_seconds)} · ${gap.duration_seconds.toFixed(1)}s`),
+  );
+  return button;
+}
+
+
+function setActiveGapTab(buttons, selectedButton) {
+  buttons.forEach((button) => {
+    const selected = button === selectedButton;
+    button.classList.toggle("active", selected);
+    button.setAttribute("aria-selected", String(selected));
+  });
+}
+
+
+function renderSelectedGap(detail, presentation, gap, video) {
+  const frameReview = createFrameReview(gap, video);
+  const explanation = createGapExplanation(gap);
+  const technicalAudit = createTechnicalAudit(gap, presentation);
+  detail.replaceChildren(
+    createGapHeading(gap, video),
+    frameReview.element,
+    explanation,
+    technicalAudit,
+  );
+  void captureGapFrames(video, gap, frameReview.canvases)
+    .catch(() => markCaptureUnavailable(frameReview.element));
+}
+
+
+function createGapHeading(gap, video) {
+  const header = createElement("div", "gap-review-heading");
+  const title = createElement("div");
+  title.append(
+    createElement("h5", "", `Gap ${gap.gap_index + 1} reconstruction`),
+    createElement("p", "", `${formatTime(gap.start_seconds)}–${formatTime(gap.end_seconds)} · ${gap.duration_seconds.toFixed(1)} seconds`),
+  );
+  const play = /** @type {HTMLButtonElement} */ (
+    createElement("button", "review-play-button", "Play this gap")
+  );
+  play.type = "button";
+  play.addEventListener("click", () => seekVideo(video, gap.start_seconds));
+  header.append(title, createElement("span", "confidence-pill", confidenceLabel(gap.confidence)), play);
+  return header;
+}
+
+
+function createFrameReview(gap, video) {
+  const review = createElement("div", "gap-frame-review");
+  const phases = [
+    ["Before", "Observed evidence", gap.before_observed, Math.max(0, gap.start_seconds - BOUNDARY_REVIEW_OFFSET_SECONDS)],
+    ["Reconstruction", "AI-inferred interval", gap.inside_inferred, gap.start_seconds + gap.duration_seconds / 2],
+    ["After", "Observed evidence", gap.after_observed, gap.end_seconds + BOUNDARY_REVIEW_OFFSET_SECONDS],
+  ];
+  const canvases = phases.map(([label, state, description, time], index) => {
+    const frame = createFrameCard(label, state, description, index === 1);
+    frame.element.addEventListener("click", () => seekVideo(video, Number(time)));
+    review.append(frame.element);
+    return frame.canvas;
+  });
+  return { element: review, canvases };
+}
+
+
+function createFrameCard(label, state, description, inferred) {
+  const button = /** @type {HTMLButtonElement} */ (
+    createElement("button", `evidence-frame${inferred ? " inferred" : ""}`)
+  );
+  button.type = "button";
+  const canvas = /** @type {HTMLCanvasElement} */ (document.createElement("canvas"));
+  canvas.width = FRAME_CAPTURE_WIDTH;
+  canvas.height = FRAME_CAPTURE_HEIGHT;
+  canvas.setAttribute("aria-label", `${label} video frame`);
+  const copy = createElement("span", "evidence-frame-copy");
+  copy.append(
+    createElement("small", "", state),
+    createElement("strong", "", label),
+    createElement("span", "", description),
+  );
+  button.append(canvas, copy);
+  return { element: button, canvas };
+}
+
+
+function createGapExplanation(gap) {
+  const layout = createElement("div", "gap-explanation");
+  const decision = createElement("section", "gap-decision");
+  decision.append(
+    createElement("span", "presentation-kicker", "Reconstruction decision"),
+    createElement("p", "", gap.inside_inferred),
+  );
+  const clues = createElement("section", "gap-clues");
+  clues.append(createElement("span", "presentation-kicker", "Evidence used"));
+  const list = createElement("ul");
+  (gap.clues || []).slice(0, MAXIMUM_VISIBLE_CLUES).forEach((clue) => {
+    list.append(createElement("li", "", clue.statement));
+  });
+  if (!list.childElementCount) {
+    list.append(createElement("li", "", "Boundary detections and measured motion continuity."));
+  }
+  clues.append(list);
+  layout.append(decision, clues);
   if (gap.unknowns.length) {
-    content.append(createTextList("Remaining unknowns", gap.unknowns, "presentation-unknowns"));
+    layout.append(createElement("p", "gap-primary-uncertainty", `Key uncertainty · ${gap.unknowns[0]}`));
+  }
+  return layout;
+}
+
+
+function createTechnicalAudit(gap, presentation) {
+  const details = /** @type {HTMLDetailsElement} */ (
+    createElement("details", "presentation-technical-audit")
+  );
+  details.append(createElement("summary", "", "Technical audit"));
+  const content = createElement("div", "technical-audit-content");
+  content.append(createAuditMetrics(gap, presentation));
+  if (gap.entities.length) content.append(createEntityDecisions(gap.entities));
+  if (gap.evidence_references.length) {
+    content.append(createTextList("Evidence references", gap.evidence_references));
+  }
+  if (gap.unknowns.length > 1) {
+    content.append(createTextList("Additional unknowns", gap.unknowns.slice(1)));
   }
   details.append(content);
   return details;
 }
 
 
-function createEventBeats(beats) {
-  if (!beats.length) {
-    return createElement("span", "");
-  }
-  const section = createElement("section", "presentation-trace-section");
-  section.append(createElement("h5", "", "Inferred motion sequence"));
-  const sequence = createElement("div", "presentation-event-beats");
-  beats.forEach((beat) => {
-    const entityLabel = beat.entity_ids.map(humanize).join(", ") || "scene";
-    sequence.append(createBadge(
-      `${Math.round(beat.time_fraction * 100)}% · ${humanize(beat.action)} · ${entityLabel}`,
-    ));
-  });
-  section.append(sequence);
-  return section;
-}
-
-
-function createGapClues(clues) {
-  if (!clues.length) {
-    return createElement("p", "presentation-empty", "No gap-specific clue was published.");
-  }
-  const section = createElement("section", "presentation-trace-section");
-  section.append(createElement("h5", "", "Visible clues used"));
-  const list = createElement("ul", "presentation-trace-list");
-  clues.forEach((clue) => {
-    list.append(createElement(
-      "li", "", `${clue.statement} · ${Math.round(clue.confidence * 100)}%`,
-    ));
-  });
-  section.append(list);
-  return section;
+function createAuditMetrics(gap, presentation) {
+  const metrics = createElement("div", "technical-metrics");
+  metrics.append(
+    createMetric(String(gap.entity_count ?? 0), "rendered entities"),
+    createMetric(`${Math.round((gap.calibration_confidence || 0) * 100)}%`, "camera calibration"),
+    createMetric(presentation.render.engine || "3D", "render engine"),
+  );
+  return metrics;
 }
 
 
 function createEntityDecisions(entities) {
-  const section = createElement("section", "presentation-trace-section");
-  section.append(createElement("h5", "", "Hypothesis decisions"));
-  if (!entities.length) {
-    section.append(createElement("p", "presentation-empty", "No supported entity decision."));
-    return section;
-  }
-  entities.forEach((entity) => section.append(createEntityDecision(entity)));
+  const section = createElement("section", "technical-section");
+  section.append(createElement("h6", "", "Entity decisions"));
+  entities.forEach((entity) => {
+    const card = createElement("article", "technical-entity");
+    card.append(
+      createElement("strong", "", humanize(entity.entity_id)),
+      createElement("span", "", `${Math.round(entity.confidence * 100)}% · ${humanize(entity.selected_hypothesis_id)}`),
+      createElement("p", "", entity.decision_summary),
+    );
+    if (entity.rejected_hypotheses.length) {
+      const rejected = entity.rejected_hypotheses.map((item) => humanize(item.id)).join(", ");
+      card.append(createElement("small", "", `Rejected: ${rejected}`));
+    }
+    section.append(card);
+  });
   return section;
 }
 
 
-function createEntityDecision(entity) {
-  const card = createElement("article", "presentation-entity-decision");
-  const heading = createElement("div", "presentation-entity-heading");
-  heading.append(
-    createElement("strong", "", humanize(entity.entity_id)),
-    createElement("span", "", `${Math.round(entity.confidence * 100)}%`),
-  );
-  card.append(
-    heading,
-    createElement("p", "presentation-selected", `Selected · ${humanize(entity.selected_hypothesis_id)}`),
-    createElement("p", "presentation-rationale", entity.decision_summary),
-  );
-  if (entity.rejected_hypotheses.length) {
-    card.append(createRejectedHypotheses(entity.rejected_hypotheses));
-  }
-  return card;
-}
-
-
-function createRejectedHypotheses(rejections) {
-  const details = /** @type {HTMLDetailsElement} */ (
-    createElement("details", "presentation-rejections")
-  );
-  details.append(createElement("summary", "", `${rejections.length} rejected alternative(s)`));
-  const list = createElement("ul", "presentation-trace-list");
-  rejections.forEach((item) => {
-    list.append(createElement("li", "", `${humanize(item.id)} — ${item.reason}`));
-  });
-  details.append(list);
-  return details;
-}
-
-
-function createTextList(title, items, className) {
-  const section = createElement("section", "presentation-trace-section");
-  section.append(createElement("h5", "", title));
-  const list = createElement("ul", `presentation-trace-list ${className}`);
+function createTextList(title, items) {
+  const section = createElement("section", "technical-section");
+  section.append(createElement("h6", "", title));
+  const list = createElement("ul");
   items.forEach((item) => list.append(createElement("li", "", item)));
   section.append(list);
   return section;
 }
 
 
-function createPhase(label, statement, inferred = false) {
-  const phase = createElement(
-    "div", `presentation-gap-phase${inferred ? " inferred" : ""}`,
-  );
-  phase.append(
-    createElement("small", "", label),
-    createElement("p", "", statement),
-  );
-  return phase;
+async function captureGapFrames(video, gap, canvases) {
+  const source = video.currentSrc || video.getAttribute("src") || "";
+  if (!source) throw new Error("Video source is unavailable");
+  const sampler = document.createElement("video");
+  sampler.preload = "auto";
+  sampler.muted = true;
+  sampler.src = source;
+  try {
+    await waitForMediaEvent(sampler, "loadedmetadata");
+    const times = [
+      Math.max(0, gap.start_seconds - BOUNDARY_REVIEW_OFFSET_SECONDS),
+      gap.start_seconds + gap.duration_seconds / 2,
+      Math.min(sampler.duration, gap.end_seconds + BOUNDARY_REVIEW_OFFSET_SECONDS),
+    ];
+    for (let index = 0; index < canvases.length; index += 1) {
+      await captureFrame(sampler, times[index], canvases[index]);
+    }
+  } finally {
+    sampler.removeAttribute("src");
+    sampler.load();
+  }
+}
+
+
+async function captureFrame(sampler, time, canvas) {
+  sampler.currentTime = Math.max(0, Math.min(time, sampler.duration || time));
+  await waitForMediaEvent(sampler, "seeked");
+  const context = canvas.getContext("2d");
+  if (!context) throw new Error("Canvas rendering is unavailable");
+  context.drawImage(sampler, 0, 0, canvas.width, canvas.height);
+}
+
+
+function waitForMediaEvent(media, eventName) {
+  if (eventName === "loadedmetadata" && media.readyState >= HTMLMediaElement.HAVE_METADATA) {
+    return Promise.resolve();
+  }
+  return new Promise((resolve, reject) => {
+    const onSuccess = () => {
+      media.removeEventListener("error", onError);
+      resolve(undefined);
+    };
+    const onError = () => {
+      media.removeEventListener(eventName, onSuccess);
+      reject(new Error(`Video ${eventName} failed`));
+    };
+    media.addEventListener(eventName, onSuccess, { once: true });
+    media.addEventListener("error", onError, { once: true });
+  });
+}
+
+
+function markCaptureUnavailable(container) {
+  container.classList.add("capture-unavailable");
+}
+
+
+function seekVideo(video, seconds) {
+  video.currentTime = Math.max(0, seconds);
+  void video.play();
 }
 
 
@@ -329,6 +386,11 @@ function createMetric(value, label) {
     createElement("small", "", label),
   );
   return metric;
+}
+
+
+function confidenceLabel(confidence) {
+  return `${Math.round(confidence * 100)}% confidence`;
 }
 
 

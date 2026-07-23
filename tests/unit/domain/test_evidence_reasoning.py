@@ -100,6 +100,14 @@ def _plan_fixture() -> dict:
                 "post_gap_position_residual_meters": 0.2,
             },
             "animation": {"state": "walk", "speed_meters_per_second": 1.2},
+            "visual_anchor": {
+                "bbox": [20, 20, 60, 90],
+                "center_x_fraction": 0.4,
+                "ground_y_fraction": 0.9,
+                "width_fraction": 0.4,
+                "height_fraction": 0.7,
+                "source_frame": 9,
+            },
             "path_prediction": {"method": "centripetal_catmull_rom", "waypoints": waypoints},
         }],
     }

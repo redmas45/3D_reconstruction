@@ -8,6 +8,9 @@ MAXIMUM_WALK_SWING_RADIANS = 0.58
 HUMAN_STRIDE_LENGTH_METERS = 1.35
 MAXIMUM_STEERING_RADIANS = math.radians(32.0)
 MINIMUM_DIRECTION_DISTANCE_METERS = 0.001
+MAXIMUM_PATH_OVERSHOOT_METERS = 0.20
+PRESENTATION_FADE_SECONDS = 0.18
+EDGE_OPACITY_FACTOR = 0.12
 
 
 def animate_entity(
@@ -28,7 +31,7 @@ def animate_entity(
         for frame_index in sample_frames
     ]
     _animate_path(parts, entity, sample_frames, positions, fps)
-    _animate_lifecycle(parts, entity, frame_count)
+    _animate_lifecycle(parts, entity, frame_count, fps)
 
 
 def catmull_rom_position(points: list[Vector], parameter: float) -> Vector:
@@ -43,9 +46,8 @@ def catmull_rom_position(points: list[Vector], parameter: float) -> Vector:
     p1 = points[segment_index]
     p2 = points[segment_index + 1]
     p3 = points[min(len(points) - 1, segment_index + 2)]
-    return _grounded_position(
-        _catmull_segment(p0, p1, p2, p3, local_parameter),
-    )
+    interpolated = _catmull_segment(p0, p1, p2, p3, local_parameter)
+    return _bounded_path_position(interpolated, points)
 
 
 def _animate_path(
@@ -208,19 +210,57 @@ def _catmull_segment(
     )
 
 
-def _animate_lifecycle(parts: dict, entity: dict, frame_count: int) -> None:
+def _bounded_path_position(position: Vector, points: list[Vector]) -> Vector:
+    bounded = position.copy()
+    for axis in (0, 1):
+        lower = min(point[axis] for point in points) - MAXIMUM_PATH_OVERSHOOT_METERS
+        upper = max(point[axis] for point in points) + MAXIMUM_PATH_OVERSHOOT_METERS
+        bounded[axis] = max(lower, min(upper, float(bounded[axis])))
+    return _grounded_position(bounded)
+
+
+def _animate_lifecycle(
+    parts: dict,
+    entity: dict,
+    frame_count: int,
+    fps: float,
+) -> None:
     lifecycle = entity["lifecycle"]
-    if lifecycle == "continuous":
-        return
     transition_frame = max(2, round(frame_count * 0.22))
-    if lifecycle == "enters":
-        keyframes = [(1, 0.0), (transition_frame, 1.0)]
+    edge_frame = min(
+        max(2, round(PRESENTATION_FADE_SECONDS * fps)),
+        max(2, frame_count // 3),
+    )
+    if lifecycle == "continuous":
+        keyframes = _continuous_opacity_keyframes(frame_count, edge_frame)
+    elif lifecycle == "enters":
+        keyframes = [
+            (1, 0.0), (transition_frame, 1.0), (frame_count, EDGE_OPACITY_FACTOR),
+        ]
     elif lifecycle == "uncertain":
-        keyframes = [(1, 1.0), (frame_count, 0.35)]
+        keyframes = [
+            (1, EDGE_OPACITY_FACTOR), (edge_frame, 0.70), (frame_count, 0.20),
+        ]
     else:
-        keyframes = [(frame_count - transition_frame, 1.0), (frame_count, 0.0)]
+        keyframes = [
+            (1, EDGE_OPACITY_FACTOR),
+            (frame_count - transition_frame, 1.0),
+            (frame_count, 0.0),
+        ]
     for material in parts.get("materials", []):
         _keyframe_material_alpha(material, keyframes)
+
+
+def _continuous_opacity_keyframes(
+    frame_count: int,
+    edge_frame: int,
+) -> list[tuple[int, float]]:
+    return [
+        (1, EDGE_OPACITY_FACTOR),
+        (edge_frame, 1.0),
+        (max(edge_frame, frame_count - edge_frame), 1.0),
+        (frame_count, EDGE_OPACITY_FACTOR),
+    ]
 
 
 def _keyframe_material_alpha(

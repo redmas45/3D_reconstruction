@@ -91,7 +91,7 @@ def _valid_presentation_manifest(payload: object) -> bool:
         payload.get("top_clues"),
     )
     return all((
-        payload.get("schema_version") == 1,
+        payload.get("schema_version") == 2,
         payload.get("status") == "completed",
         isinstance(payload.get("title"), str),
         isinstance(payload.get("disclosure"), str),

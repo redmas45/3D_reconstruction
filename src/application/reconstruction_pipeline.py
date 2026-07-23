@@ -331,7 +331,7 @@ def _build_plans(scene_report: dict, selection: dict, info: dict, work_dir: Path
             scene_report,
             tuple(hidden_range),
             info["fps"],
-            max_entities=scene_config.get("max_render_entities", 12),
+            max_entities=scene_config.get("max_render_entities", 5),
             min_track_frames=scene_config.get("min_track_frames", 2),
         )
         plan["gap_index"] = gap_index
@@ -845,7 +845,7 @@ def _prepare_scene_and_plans(
             scene_report,
             selection["hidden_ranges"],
             work_dir,
-            int(config.get("scene", {}).get("max_render_entities", 12)),
+            int(config.get("scene", {}).get("max_render_entities", 5)),
             config.get("renderer", {}),
             options.cancellation_check,
         )

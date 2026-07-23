@@ -96,6 +96,9 @@ def _load_scene_builder() -> types.ModuleType:
             assign_pass_index=lambda *arguments: None,
         ),
         "vehicle_builder": _module_with("vehicle_builder", build_vehicle=lambda entity: None),
+        "visual_alignment": _module_with(
+            "visual_alignment", align_entity_scale=lambda *arguments: 1.0,
+        ),
     }
     module_path = PROJECT_ROOT / "blender" / "scene_builder.py"
     specification = importlib.util.spec_from_file_location("tested_scene_builder", module_path)

@@ -21,6 +21,7 @@ const UPLOAD_TIMEOUT_MILLISECONDS = 300_000;
  * @property {number} confidence
  * @property {string[]} unknowns
  * @property {string[]} evidence_references
+ * @property {string[]} evidence_references
  * @property {ReasoningEntityDecision[]} entities
  */
 
@@ -80,6 +81,7 @@ const UPLOAD_TIMEOUT_MILLISECONDS = 300_000;
  * @property {{id:string, category:string, statement:string, confidence:number}[]} top_clues
  * @property {PresentationGap[]} gaps
  * @property {{mode:string, engine:string, target_fps:number, hybrid_static_backplate:boolean, production_hud_mode:string}} render
+ * @property {{filename:string, gap_count:number, reconstructed_fraction:number}} output
  */
 
 /**

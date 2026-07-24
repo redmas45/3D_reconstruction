@@ -69,6 +69,25 @@ const UPLOAD_TIMEOUT_MILLISECONDS = 300_000;
  * @property {{time_fraction:number, action:string, entity_ids:string[]}[]} event_beats
  * @property {number} entity_count
  * @property {number} calibration_confidence
+ * @property {{method:string, summary:string, boundary_basis:string}} [patch]
+ */
+
+/**
+ * @typedef {Object} PresentationEvidenceOverview
+ * @property {string} summary
+ * @property {number} observed_seconds
+ * @property {number} missing_seconds
+ * @property {number} tracked_entity_count
+ * @property {number} people_count
+ * @property {number} vehicle_count
+ * @property {number} clue_count
+ */
+
+/**
+ * @typedef {Object} PresentationMethod
+ * @property {string} label
+ * @property {string} description
+ * @property {{id:string, title:string, description:string, status:string}[]} steps
  */
 
 /**
@@ -78,6 +97,8 @@ const UPLOAD_TIMEOUT_MILLISECONDS = 300_000;
  * @property {string} disclosure
  * @property {{duration_seconds:number, observed_fraction:number}} source
  * @property {{headline:string, summary:string, confidence:number, causal_link_supported:boolean, planning_mode:string, deployment:string, warning:string, unknowns:string[], points:string[]}} story
+ * @property {PresentationEvidenceOverview} [evidence_overview]
+ * @property {PresentationMethod} [method]
  * @property {{id:string, category:string, statement:string, confidence:number}[]} top_clues
  * @property {PresentationGap[]} gaps
  * @property {{mode:string, engine:string, target_fps:number, hybrid_static_backplate:boolean, production_hud_mode:string}} render

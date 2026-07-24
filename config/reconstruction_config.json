@@ -1,6 +1,10 @@
 {
   "yolo": {
     "model": "yolo26m.pt",
+    "pose_enabled": true,
+    "pose_model": "yolo26n-pose.pt",
+    "pose_confidence": 0.3,
+    "pose_boundary_samples": 2,
     "frame_stride": 8,
     "downscale_width": 960,
     "confidence": 0.3,
@@ -98,7 +102,7 @@
     "context_seconds": 2.0
   },
   "scene": {
-    "max_render_entities": 5,
+    "max_render_entities": 3,
     "min_track_frames": 2,
     "track_interpolation_max_gap_multiplier": 4
   },
@@ -136,7 +140,7 @@
     "default_profile": "standard_forensic",
     "preview_scale_percent": 50,
     "production_scale_percent": 45,
-    "target_fps": 6,
+    "target_fps": 8,
     "scale_percent": 45,
     "cycles_samples": 2,
     "minimum_render_long_edge": 960,

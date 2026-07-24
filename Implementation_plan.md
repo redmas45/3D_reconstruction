@@ -8,8 +8,8 @@ This is the approved, living implementation plan for the AI evidence-gap reconst
 
 - Phase 0 is implemented: the OpenCV 2.5D renderer remains an explicit fallback and Blender 4.5 LTS runs headlessly through a JSON-only boundary.
 - Phase 1 is substantially implemented and unit tested: visible-only evidence enforcement, delayed hidden-truth materialization, identity registry, motion measurement, robust height priors, duration-aware three-to-eight-point paths, class-specific kinematic bounds, soft post-gap residuals, crossing-appearance rejection, and confidence-driven presentation filtering.
-- Phase 2 is **partial**, not complete: source resolution, visible-person ground-contact/horizon fitting, robust camera-height estimation, one pinhole projection shared by the plan and Blender camera, evidence backplate compositing, procedural entities, and boundary-box-driven entity scale alignment exist. Unsupported automatic street/building proxies are disabled. Reviewed proxy authoring, wireframe reprojection validation, and source-camera motion application do not.
-- Phase 3 is **partial**: primitive-based articulated motion, lifecycle fades, confidence fidelity tiers, distance-driven gait and wheels, bounded vehicle steering, fractional frame rates, and adaptive resolution are implemented. Production shutters were removed in favor of one small honest reconstruction badge. Dynamic footage is explicitly downgraded to a labeled stabilized forensic view. Human armatures/skeletal rigs remain optional future polish rather than a current acceptance dependency.
+- Phase 2 is **partial**, not complete: source resolution, visible-person ground-contact/horizon fitting, robust camera-height estimation, one pinhole projection shared by the plan and Blender camera, visible-only temporal background estimation for static footage, cleaned before/after boundary compositing, procedural entities, and boundary-box-driven entity scale alignment exist. Unsupported automatic street/building proxies are disabled. Reviewed proxy authoring, wireframe reprojection validation, and source-camera motion application do not.
+- Phase 3 is **implemented pending visual approval**: supported/plausible people use a checked-in rigged humanoid and baked NLA idle/walk/brisk-walk/run actions; YOLO pose on visible frames selects and phase-aligns motion, while weak entities retain simplified silhouettes and the former articulated primitive is an explicit asset-failure fallback. Lifecycle opacity, confidence tiers, vehicle wheel/steering animation, sampled paths, fractional rates, and adaptive resolution remain active. Continuous actors remain solid; only entering/exiting lifecycles transition opacity. Dynamic footage is still downgraded to a labeled stabilized forensic view.
 - UI/pipeline integration is implemented, including one-video queueing, three local Blender gap workers, cancellation, live progress, output playback/deletion, and a 2.5D fallback. Metadata writes are throttled and transactional so frame callbacks do not create Windows write contention or ghost jobs.
 - Runtime hardening now performs FFmpeg, FFprobe, and Blender preflight; rejects variable-frame-rate, odd-dimension, over-4K-budget, over-120-fps, and over-10-minute sources; validates decoded segment/output contracts; preserves portrait and landscape dimensions; stops sibling Blender processes after one gap fails; and prevents short source audio from truncating video.
 - Resume state is content-addressed by source SHA-256. Selection and detection JSON use atomic replacement and malformed-cache recovery; Blender reuse verifies the plan/report contract and the physical MP4 contract before accepting a completed gap.
@@ -17,8 +17,8 @@ This is the approved, living implementation plan for the AI evidence-gap reconst
 - The supported profile is currently constant-frame-rate, static-camera footage with people or road vehicles visible near gap boundaries. Moving-camera footage is experimental because motion is measured but not applied to the Blender camera; arbitrary indoor/general-scene reconstruction is not claimed as flawless.
 - Evidence/story Gates A–C are implemented for Blender jobs: deterministic clue IDs, a hidden-frame-safe keyframe/crop manifest, per-entity hypotheses, batched multimodal Azure gap decisions, strict local validation, deterministic fallback, a presentation-only whole-video narrative, renderer-only storyboard compilation, render budgets, and the UI story/gap timeline are present. The configured deployment is read from `AZURE_OPENAI_CHAT_DEPLOYMENT`; deployment discovery and the minimal live structured-output probe now pass against `gpt-5.4-mini`. Full-video Azure decisions and visual comparison remain validation gates.
 - The Colab T4 successfully completed a real Blender Cycles OptiX probe in 4.544 seconds, proving GPU access. A subsequent production run reached the Colab T4 session limit after roughly 3–4 hours, proving that the current source-FPS, 75%-scale, 16-sample profile is not a viable full-video default.
-- Smart-renderer Gate D is substantially implemented: the default profile renders a 6 fps, two-sample composite sequence at an adaptive 960–1280-pixel long edge, keeps the visible boundary frame as the evidence backplate for both static and explicitly stabilized experimental moving-camera views, skips valid frames after interruption, and restores exact source timing. Entity presentation is capped at five, suppresses overlapping same-lifecycle duplicate tracks, aligns projected height to the observed boundary box, clips curve overshoot, and fades actor geometry across gap edges. Bounded environment, actor, uncertainty, HUD, depth, and shadow diagnostics are extracted at review poses from the same render. The heaviest gap runs first, predicts total time, writes `runtime_estimate.json`, refuses projections over 120 minutes without override, and in Colab requires explicit visual approval before remaining gaps start. Reusable scene-shell instancing and complete per-frame layer manifests remain future optimization.
-- Judge presentation Gate E is implemented structurally: one `presentation_manifest.json` supplies player markers, the whole-video story, strongest visible clues, per-gap observed/inferred/observed states, confidence, calibration confidence, event beats, selected/rejected hypotheses, evidence references, and unknowns. The local schema-v2 reader and Colab result viewer use the same contract. The primary UI shows one selected gap with captured before/inferred/after frames, three essential metrics, concise evidence, and one key uncertainty; engineering details remain in a collapsed technical audit. Colab creates a bounded judge preview and serves it through its authenticated notebook proxy without a public tunnel.
+- Smart-renderer Gate D is substantially implemented: the default profile renders an 8 fps, two-sample composite sequence at an adaptive 960–1280-pixel long edge, builds one cached visible-only temporal background estimate for confirmed static footage, crossfades cleaned before/after boundary context, skips valid frames after interruption, and restores exact source timing. Entity presentation is capped at three, rejects clipped boundary anchors, suppresses overlapping same-lifecycle duplicate tracks, aligns projected height to the observed boundary box, clips curve overshoot, and applies lifecycle-specific opacity. Bounded environment, actor, uncertainty, HUD, depth, and shadow diagnostics are extracted at review poses from the same render. The heaviest gap runs first, predicts total time, writes `runtime_estimate.json`, refuses projections over 120 minutes without override, and in Colab requires explicit visual approval before remaining gaps start. Reusable scene-shell instancing and complete per-frame layer manifests remain future optimization.
+- Judge presentation Gate E is implemented structurally: one schema-v3 `presentation_manifest.json` supplies player markers, the whole-video story, a visible-versus-missing evidence overview, strongest clues, a four-stage public decision trace, per-gap observed/inferred/observed states, patch method, confidence, calibration confidence, event beats, selected/rejected hypotheses, evidence references, and unknowns. The local reader remains backward-compatible with schema v2, and the Colab result viewer uses the same contract. The primary UI leads with the full-video finding, clearly separates the observed 75% from the reconstructed 25%, explains how the patch was produced, and shows one selected gap with captured before/inferred/after frames. Engineering details remain in a collapsed technical audit. Colab creates a bounded judge preview and serves it through its authenticated notebook proxy without a public tunnel.
 - Phase 4 (three representative gaps), Phase 5 (full one-video render), Phase 6 judge polish, and Phase 7 second-video validation remain approval gates.
 
 Historical render artifacts (useful for timing/container inspection, but generated before the current evidence/calibration hardening and therefore not current visual-acceptance proof):
@@ -26,8 +26,9 @@ Historical render artifacts (useful for timing/container inspection, but generat
 - `outputs/blender_preview_input_vid3/gap_00/`: original-video gap-0 midpoint, animation, plan, `.blend`, report, log, and contact sheet.
 - `outputs/e2e_blender_smoke/`: 150-frame UI-pipeline smoke result with one 38-frame Blender gap, H.264 video, AAC audio, and exact 1280×720 / 29.970029 fps contract.
 - Eevee production timing on this CPU: final 57-frame gap with transitions in 560.489 seconds; 38-frame smoke gap in 261.256 seconds.
-- Automated verification: 149 tests pass. Coverage includes source admission, content-addressed and corrupt-cache recovery, hidden-frame image isolation, per-entity decision validation, bounded multi-gap fallback narrative, immutable Azure evidence-context schemas, narrative/storyboard compilation, Azure multimodal request construction and deployment validation, sparse timing normalization, Story v2 public artifacts, sibling cancellation, metadata rollback, audio duration, local API races, UI-controller behavior, and Cycles GPU configuration.
+- Automated verification: 179 tests pass. Coverage includes source admission, content-addressed and corrupt-cache recovery, hidden-frame image isolation, temporal background masking, lifecycle opacity, articulated gait, visible wheel rotation, per-frame sparse poses, per-entity decision validation, bounded multi-gap fallback narrative, immutable Azure evidence-context schemas, narrative/storyboard compilation, Azure multimodal request construction and deployment validation, sparse timing normalization, schema-v2/v3 presentation compatibility, production debug-grid suppression, sibling cancellation, metadata rollback, audio duration, local API races, UI-controller behavior, and Cycles GPU configuration.
 - A real headless Blender contract probe preserved a 720×1280 portrait resolution at 29.97 fps. A new full render has not been run during this audit.
+- The static-street representative gap has been re-rendered locally at its first, midpoint, and final poses after foreground cleanup. The validation confirms readable context, no duplicate actor crowd, three-entity selection, solid continuous lifecycles, one exiting lifecycle, grounded contact shadows, and bounded screen scale. A complete approval-gap video must still be rendered on Colab before the full job is approved.
 
 ## 2. Current State
 
@@ -406,7 +407,7 @@ This preserves shadows and depth while avoiding a full expensive environment ren
 
 ### Reconstruction frame rate
 
-Blender renders animation at an effective **6 reconstruction FPS** in the bounded default profile. The renderer evaluates the continuous curve at each sparse timestamp, then deterministically restores the exact source frame count and rate. A higher-FPS quality profile remains an explicit later visual upgrade after the default profile passes its runtime and coherence gate.
+Blender renders animation at an effective **8 reconstruction FPS** in the bounded default profile. The renderer evaluates and keyframes the continuous curve and articulated gait at every sparse timestamp, then deterministically restores the exact source frame count and rate. A higher-FPS quality profile remains an explicit later visual upgrade after the default profile passes its runtime and coherence gate.
 
 Blender evaluates the full continuous animation curve at each sparse timestamp. Motion blur is configured consistently to make the stylized cadence intentional. After compositing, the gap is normalized to the exact source frame count and frame rate.
 
@@ -1060,7 +1061,7 @@ Each registry entry contains:
 
 Every gap references `identity_registry_id`. Blender must reuse the same registry entry and cached asset in every gap. Registry invalidation occurs only when the underlying visible evidence, tracking result, or generator version changes.
 
-### Animation states
+### Animation states and reusable motion assets
 
 Minimum states:
 
@@ -1070,16 +1071,38 @@ Minimum states:
 - entering frame
 - leaving frame
 
-Walking will use a procedural cyclic animation:
+Supported and plausible people use a reusable armature and baked Blender NLA
+actions rather than computing every limb rotation inside each render. The
+checked-in runtime asset exposes idle, walk, brisk-walk, and run clips. It is
+offline, deterministic, and shared by local and Colab execution. A separate
+offline packager can replace the starter character/actions with user-downloaded
+Mixamo FBXs that share one skeleton; Mixamo is never contacted while processing
+a judge video.
 
-- opposing leg swing
-- opposing arm swing
-- knee bend
-- slight pelvis rotation
-- vertical body motion
-- foot contact timing
+Animation selection is evidence bounded:
 
-Animation speed will be derived from world-space path speed. A deterministic phase offset prevents every person from walking in synchronization.
+1. `yolo26n-pose.pt` runs only on the configured sampled frames at each visible
+   segment boundary, not across the full visible timeline.
+2. COCO-17 joints are normalized inside the matched tracked-person box.
+3. The closest valid pre-gap and post-gap poses become explicit motion evidence.
+4. World-space speed selects idle, walk, brisk-walk, or run.
+5. The pre-gap ankle relationship aligns the NLA gait phase when pose confidence
+   passes the configured threshold.
+6. Missing or weak pose evidence uses the globally seeded per-track phase and is
+   labeled `kinematic_fallback`.
+7. Azure may choose only a validated motion hypothesis; after its speed/action
+   decision, the clip and cadence are deterministically synchronized again.
+
+The NLA action controls body articulation only. The validated Catmull-Rom path,
+ground contact, lifecycle opacity, direction, confidence tier, and camera
+alignment remain controlled by the reconstruction plan. This prevents a motion
+clip or prose summary from moving an actor to unsupported coordinates.
+
+The generated `motion_profile` records its source, clip, cadence, phase,
+pose-confidence score, visible evidence frames, and blend duration. Render
+reports surface the selected clip/source for audit. A missing or invalid motion
+asset emits `MOTION_ASSET_FALLBACK` and uses the existing procedural actor;
+weak-confidence entities continue to use the simplified silhouette.
 
 ### Lifecycle rules
 
@@ -1350,6 +1373,7 @@ src/
     clue_catalog.py                 # target
     evidence_images.py              # target
     gap_hypotheses.py               # target: per-entity candidates
+    motion_profile.py               # visible-pose clip, cadence, and phase contract
     reconstruction_narrative.py     # target
     render_storyboard.py            # target
     render_frame_manifest.py        # target
@@ -1368,6 +1392,7 @@ src/
   appearance.py
   identity_registry.py
   path_prediction.py
+  pose_detection.py                 # COCO-17 extraction and track-box association
   proxy_geometry.py
   media.py
 
@@ -1379,12 +1404,22 @@ blender/
   camera_builder.py
   environment_builder.py
   human_builder.py
+  motion_asset.py                   # append rig, apply evidence materials, configure NLA
+  create_motion_asset.py            # deterministic offline starter-asset builder
   human_animation.py
   vehicle_builder.py
   vehicle_animation.py
   materials.py
   hud.py
   author_proxies.py
+
+assets/
+  animation/
+    humanoid_motion_library.blend
+    README.md
+
+scripts/
+  prepare_mixamo_motion_library.py  # offline user-supplied FBX packager
 
 tests/
   unit/
@@ -1531,11 +1566,12 @@ Gate:
 
 No animation work should proceed before this visual gate.
 
-### Phase 3 — One-gap animation (partial; final user approval gate pending)
+### Phase 3 — One-gap animation (implemented; visual approval still required)
 
 Work:
 
-- add human armatures and walking cycles (primitive articulation exists; armatures remain pending)
+- use the reusable rigged humanoid, baked NLA motion clips, and pose-aligned gait phase
+- retain the procedural articulated human only as an explicit asset-failure fallback
 - add vehicle orientation and wheel animation driven by a C1-continuous path tangent
 - add entity lifecycles and uncertainty paths
 - apply confidence-to-fidelity tiers and the formal crowded-scene relevance score
@@ -2104,13 +2140,15 @@ This section records the approved post-result changes. These rules apply to ever
 
 ### Sharp hybrid rendering policy
 
-- confirmed static-camera scenes retain the last visible boundary frame as the full-frame evidence backplate
-- Blender renders only the inferred actors, contact/shadow receiver, uncertainty, and minimal badge over that backplate
+- confirmed static-camera scenes build a cached background estimate from distributed visible frames while excluding tracked foreground regions
+- each gap uses feathered cleaned context from both visible boundaries and crossfades between them
+- Blender renders at most three unclipped, relevance-ranked actors plus contact shadows, uncertainty, outlines, and a minimal badge
 - production resolution targets a 960–1280-pixel long edge without upscaling small sources
-- the bounded default profile uses 6 sparse reconstruction fps and two Cycles samples, then restores exact source timing
+- the bounded default profile uses 8 sparse reconstruction fps and two Cycles samples, then restores exact source timing
 - lower detail is permitted; soft, unreadable, or visibly broken reconstruction is not
 - black shutters, large transition captions, and the evidence inset are excluded from production presentation
-- one small `RECONSTRUCTED · AI-INFERRED` badge remains throughout every inferred interval
+- continuous actors stay solid; entering actors fade in and exiting actors fade out
+- one small `AI RECONSTRUCTION` badge remains throughout every inferred interval
 
 ### Presentation manifest and local UI
 
@@ -2124,7 +2162,7 @@ Every successful run writes one `presentation_manifest.json` containing:
 - renderer mode, engine, sparse FPS, and hybrid-backplate status
 - the explicit non-ground-truth disclosure
 
-The completed-output UI uses that manifest as the judge-facing source. It shows a large video player with clickable gap markers, the story and key metrics, strongest clues, and compact gap-review cards. Each gap has a collapsible evidence-and-decision trace containing linked clues, inferred event beats, selected hypotheses, rejected alternatives with reasons, confidence, calibration confidence, evidence references, and remaining unknowns.
+The completed-output UI uses that manifest as the judge-facing source. Its information order is fixed: full-video finding; observed-versus-missing metrics; reconstructed player with clickable gap markers; visible-evidence summary and strongest clues; four-stage public decision trace; then the gap-by-gap patch review. Each selected gap shows Before / Reconstruction / After frames, the patch method and boundary basis, linked clues, confidence, and one primary uncertainty. Selected hypotheses, rejected alternatives with reasons, calibration confidence, evidence references, event beats, and remaining unknowns stay in a collapsed technical audit. Raw private chain-of-thought is never requested or displayed.
 
 ### Colab result presentation
 

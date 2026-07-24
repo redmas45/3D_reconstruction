@@ -73,11 +73,26 @@ def _validate_gap_configuration(gap_configuration: dict) -> None:
 
 def _validate_yolo_configuration(yolo_configuration: dict) -> None:
     confidence = _required_number(yolo_configuration, "confidence")
+    pose_confidence = _required_number(yolo_configuration, "pose_confidence")
+    pose_boundary_samples = _required_integer(
+        yolo_configuration,
+        "pose_boundary_samples",
+    )
     frame_stride = _required_integer(yolo_configuration, "frame_stride")
     if not 0.0 <= confidence <= 100.0:
         raise ConfigurationValidationError("yolo.confidence must be between 0 and 1, or a percentage up to 100")
     if frame_stride < 1:
         raise ConfigurationValidationError("yolo.frame_stride must be at least 1")
+    if not isinstance(yolo_configuration.get("pose_enabled"), bool):
+        raise ConfigurationValidationError("yolo.pose_enabled must be boolean")
+    if not isinstance(yolo_configuration.get("pose_model"), str):
+        raise ConfigurationValidationError("yolo.pose_model must be a string")
+    if not 0.0 <= pose_confidence <= 1.0:
+        raise ConfigurationValidationError("yolo.pose_confidence must be between 0 and 1")
+    if not 1 <= pose_boundary_samples <= 8:
+        raise ConfigurationValidationError(
+            "yolo.pose_boundary_samples must be between 1 and 8"
+        )
 
 
 def _validate_renderer_configuration(renderer_configuration: dict) -> None:

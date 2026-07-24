@@ -26,7 +26,7 @@ from infrastructure.media_tools import (
     encode_png_sequence,
     inspect_video_contract,
 )
-from infrastructure.video_frames import export_video_frame
+from infrastructure.video_frames import export_forensic_context_frame
 
 
 REQUIRED_RENDER_REPORT_FIELDS = frozenset({
@@ -132,10 +132,18 @@ def _write_gap_plans(
         raise_if_cancelled(cancellation_check)
         hidden_range = (int(hidden_range_items[0]), int(hidden_range_items[1]))
         gap_directory = work_directory / "gaps" / f"gap_{gap_index:02d}" / "blender"
-        context_path = export_video_frame(
+        context_path = export_forensic_context_frame(
             video_path,
             hidden_range[0] - 1,
+            scene_report,
             gap_directory / "visible_boundary_context.jpg",
+            cancellation_check,
+        )
+        post_context_path = export_forensic_context_frame(
+            video_path,
+            min(hidden_range[1] + 1, int(scene_report["video"]["frames"]) - 1),
+            scene_report,
+            gap_directory / "visible_boundary_context_after.jpg",
             cancellation_check,
         )
         plan = build_reconstruction_plan_v2(
@@ -145,6 +153,7 @@ def _write_gap_plans(
             gap_index,
             maximum_entities=maximum_entities,
             context_frame_path=context_path,
+            post_context_frame_path=post_context_path,
             render_configuration=render_configuration,
         )
         plan_path = gap_directory / "plan_v2.json"

@@ -298,6 +298,12 @@ def _load_detections(
         downscale_width=yolo_config.get("downscale_width", 960),
         conf=normalize_confidence(yolo_config.get("confidence", 0.3)),
         tracker_config=tracker_config,
+        pose_model_name=(
+            yolo_config.get("pose_model", "yolo26n-pose.pt")
+            if yolo_config.get("pose_enabled", True) else None
+        ),
+        pose_confidence=normalize_confidence(yolo_config.get("pose_confidence", 0.3)),
+        pose_boundary_samples=int(yolo_config.get("pose_boundary_samples", 2)),
         progress_callback=report_detection,
         cancellation_check=cancellation_check,
     )
@@ -321,6 +327,14 @@ def _detection_cache_contract(
         "downscale_width": int(yolo_config.get("downscale_width", 960)),
         "confidence": normalize_confidence(yolo_config.get("confidence", 0.3)),
         "tracker_config": tracker_config,
+        "pose_enabled": bool(yolo_config.get("pose_enabled", True)),
+        "pose_model": str(yolo_config.get("pose_model", "yolo26n-pose.pt")),
+        "pose_confidence": normalize_confidence(
+            yolo_config.get("pose_confidence", 0.3),
+        ),
+        "pose_boundary_samples": int(
+            yolo_config.get("pose_boundary_samples", 2),
+        ),
     }
 
 
@@ -331,7 +345,7 @@ def _build_plans(scene_report: dict, selection: dict, info: dict, work_dir: Path
             scene_report,
             tuple(hidden_range),
             info["fps"],
-            max_entities=scene_config.get("max_render_entities", 5),
+            max_entities=scene_config.get("max_render_entities", 3),
             min_track_frames=scene_config.get("min_track_frames", 2),
         )
         plan["gap_index"] = gap_index
@@ -845,7 +859,7 @@ def _prepare_scene_and_plans(
             scene_report,
             selection["hidden_ranges"],
             work_dir,
-            int(config.get("scene", {}).get("max_render_entities", 5)),
+            int(config.get("scene", {}).get("max_render_entities", 3)),
             config.get("renderer", {}),
             options.cancellation_check,
         )

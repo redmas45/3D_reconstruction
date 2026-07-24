@@ -4,6 +4,7 @@ import copy
 import hashlib
 import json
 
+from domain.motion_profile import synchronize_motion_profile
 from domain.reconstruction_plan_v2 import validate_reconstruction_plan_v2
 
 
@@ -266,6 +267,7 @@ def _apply_hypothesis_paths(plan: dict, hypothesis: dict) -> None:
         )
         if hypothesis["displacement_scale"] == 0:
             entity["animation"]["state"] = "idle"
+        synchronize_motion_profile(entity)
 
 
 def _plan_decision_contract(decision: dict, evidence_digest: str) -> dict:

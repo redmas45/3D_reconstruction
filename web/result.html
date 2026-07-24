@@ -3,29 +3,54 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>3D Reconstruction — Evidence Review</title>
+  <meta name="description" content="Judge-facing AI-inferred video reconstruction report">
+  <title>3D Reconstruction — Evidence Report</title>
+  <link rel="icon" href="/assets/icons/favicon.svg" type="image/svg+xml">
+  <script src="/assets/scripts/theme-bootstrap.js"></script>
   <link rel="stylesheet" href="/assets/styles/result.css">
+  <link rel="stylesheet" href="/assets/styles/evidence-summary.css">
   <link rel="stylesheet" href="/assets/styles/presentation.css">
   <script src="/assets/scripts/result-view.js" type="module"></script>
 </head>
 <body>
+  <header class="result-header">
+    <a class="result-brand" href="/" aria-label="3D Reconstruction home">
+      <span class="result-brand-mark" aria-hidden="true"><span></span><span></span><span></span></span>
+      <span>3D RECONSTRUCTION</span>
+    </a>
+    <div class="result-header-actions">
+      <button class="theme-toggle" id="theme-toggle" type="button" aria-label="Switch theme" title="Switch theme">
+        <span class="theme-icon theme-sun" aria-hidden="true">☀</span>
+        <span class="theme-icon theme-moon" aria-hidden="true">☾</span>
+      </button>
+      <span class="result-status"><span></span> Report complete</span>
+    </div>
+  </header>
   <main class="result-shell">
-    <header>
-      <div>
-        <span class="eyebrow">AI-INFERRED EVIDENCE VISUALIZATION</span>
-        <h1>Evidence reconstruction review</h1>
-      </div>
-      <span class="result-status">Complete</span>
-    </header>
+    <div class="result-title">
+      <span class="eyebrow">AI-INFERRED EVIDENCE VISUALIZATION</span>
+      <h1>Reconstruction evidence report</h1>
+      <p>A clear record of what was observed, what was missing, and how each interval was reconstructed.</p>
+    </div>
+    <section id="overview-root" aria-live="polite">
+      <p class="loading">Preparing the full-video finding…</p>
+    </section>
     <section class="result-player">
+      <div class="result-player-heading">
+        <div>
+          <span class="presentation-kicker">Reconstructed output</span>
+          <h2>Review the complete timeline</h2>
+        </div>
+        <span class="player-hint">Cyan markers identify patched intervals</span>
+      </div>
       <div class="video-player">
         <video id="result-video" controls preload="metadata" src="/api/video"></video>
       </div>
       <div id="marker-root"></div>
-      <p>Use the cyan timeline markers to jump directly to reconstructed intervals. Full-quality artifacts remain saved in Google Drive.</p>
+      <p class="player-caption">Select a timeline marker or a gap card below to jump directly to reconstructed footage.</p>
     </section>
     <section id="presentation-root" aria-live="polite">
-      <p class="loading">Loading the evidence story and gap review…</p>
+      <p class="loading">Loading visible evidence, decisions, and gap reviews…</p>
     </section>
   </main>
 </body>

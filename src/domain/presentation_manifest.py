@@ -3,7 +3,7 @@ from pathlib import Path
 from infrastructure.json_files import read_json_file, write_json_file
 
 
-PRESENTATION_SCHEMA_VERSION = 2
+PRESENTATION_SCHEMA_VERSION = 3
 MAXIMUM_PRESENTED_CLUES = 8
 MAXIMUM_PRESENTED_GAP_CLUES = 6
 MAXIMUM_PRESENTED_ENTITIES_PER_GAP = 12
@@ -28,6 +28,9 @@ def build_presentation_manifest(
         gap_selection["hidden_ranges"], fps, reasoning, plans,
     )
     duration_seconds = float(video_info["frames"]) / fps
+    observed_fraction = round(
+        1.0 - float(gap_selection["missing_fraction_actual"]), 4,
+    )
     return {
         "schema_version": PRESENTATION_SCHEMA_VERSION,
         "status": "completed",
@@ -41,11 +44,13 @@ def build_presentation_manifest(
             "fps": fps,
             "width": int(video_info["width"]),
             "height": int(video_info["height"]),
-            "observed_fraction": round(
-                1.0 - float(gap_selection["missing_fraction_actual"]), 4,
-            ),
+            "observed_fraction": observed_fraction,
         },
         "story": _story_contract(reasoning, scene_report),
+        "evidence_overview": _evidence_overview(
+            reasoning, scene_report, duration_seconds, observed_fraction,
+        ),
+        "method": _method_contract(reasoning, gaps),
         "top_clues": _top_clues(reasoning),
         "gaps": gaps,
         "render": _render_contract(renderer_mode, plans),
@@ -148,6 +153,7 @@ def _gap_contract(
         "calibration_confidence": round(
             float(plan.get("camera", {}).get("calibration_confidence", 0.0)), 4,
         ),
+        "patch": _patch_contract(summary, decision, plan),
     }
 
 
@@ -169,6 +175,109 @@ def _story_contract(reasoning: dict, scene_report: dict) -> dict:
             for item in reasoning.get("story_points", [])
             if isinstance(item, dict) and isinstance(item.get("statement"), str)
         ],
+    }
+
+
+def _evidence_overview(
+    reasoning: dict,
+    scene_report: dict,
+    duration_seconds: float,
+    observed_fraction: float,
+) -> dict:
+    people_count = int(scene_report.get("people_count", 0))
+    vehicle_count = int(scene_report.get("vehicle_count", 0))
+    tracked_entity_count = len(scene_report.get("tracks", []))
+    clue_count = len(reasoning.get("clues", []))
+    observed_seconds = duration_seconds * observed_fraction
+    return {
+        "summary": _visible_evidence_summary(
+            reasoning, observed_seconds, people_count, vehicle_count,
+        ),
+        "observed_seconds": round(observed_seconds, 3),
+        "missing_seconds": round(duration_seconds - observed_seconds, 3),
+        "tracked_entity_count": tracked_entity_count,
+        "people_count": people_count,
+        "vehicle_count": vehicle_count,
+        "clue_count": clue_count,
+    }
+
+
+def _visible_evidence_summary(
+    reasoning: dict,
+    observed_seconds: float,
+    people_count: int,
+    vehicle_count: int,
+) -> str:
+    entity_summary = (
+        f"{people_count} people and {vehicle_count} vehicles"
+        if people_count or vehicle_count
+        else "the visible actors and scene context"
+    )
+    strongest_clues = _top_clues(reasoning)
+    clue_summary = (
+        f" The strongest recorded clue was: {strongest_clues[0]['statement']}"
+        if strongest_clues else ""
+    )
+    return (
+        f"Across {observed_seconds:.1f} seconds of visible footage, the system "
+        f"tracked {entity_summary} and measured their continuity around every gap."
+        f"{clue_summary}"
+    )
+
+
+def _method_contract(reasoning: dict, gaps: list[dict]) -> dict:
+    planning_mode = str(reasoning.get("mode", "deterministic fallback"))
+    planner = "Azure-assisted" if planning_mode == "azure" else "Deterministic"
+    return {
+        "label": "Public decision trace",
+        "description": (
+            "A judge-facing explanation of the evidence and validated decisions. "
+            "It is not private model chain-of-thought."
+        ),
+        "steps": [
+            _method_step("observe", "Observe", "Analyze only the visible 75% of the video."),
+            _method_step(
+                "measure", "Measure",
+                "Track entities, directions, continuity, boundary frames, and camera stability.",
+            ),
+            _method_step(
+                "decide", "Decide",
+                f"{planner} planning compares bounded hypotheses and validates every reference.",
+            ),
+            _method_step(
+                "patch", "Patch",
+                f"Render and stitch {len(gaps)} inferred intervals while preserving the source timeline.",
+            ),
+        ],
+    }
+
+
+def _method_step(identifier: str, title: str, description: str) -> dict:
+    return {
+        "id": identifier,
+        "title": title,
+        "description": description,
+        "status": "completed",
+    }
+
+
+def _patch_contract(summary: dict, decision: dict, plan: dict) -> dict:
+    environment = plan.get("environment", {})
+    method = (
+        "Stylized 3D actors composited over observed scene context"
+        if environment.get("hybrid_backplate_enabled")
+        else "Stylized 3D scene reconstruction"
+    )
+    return {
+        "method": method,
+        "summary": str(summary.get(
+            "inside_inferred",
+            decision.get("gap_summary", "Bounded motion hypothesis."),
+        )),
+        "boundary_basis": (
+            "Motion starts from the last visible state; the first visible state "
+            "after the gap is used as a consistency check."
+        ),
     }
 
 

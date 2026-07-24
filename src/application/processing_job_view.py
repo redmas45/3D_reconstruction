@@ -15,6 +15,7 @@ PUBLIC_REASONING_FILENAME = "reasoning_public.json"
 PRESENTATION_MANIFEST_FILENAME = "presentation_manifest.json"
 MAXIMUM_PUBLIC_REASONING_BYTES = 512_000
 MAXIMUM_PUBLIC_REASONING_ITEMS = 50
+SUPPORTED_PRESENTATION_SCHEMA_VERSIONS = frozenset({2, 3})
 
 
 def estimate_eta(record: ProcessingJob) -> int | None:
@@ -84,6 +85,7 @@ def _presentation_snapshot(output_directory: Path) -> dict | None:
 def _valid_presentation_manifest(payload: object) -> bool:
     if not isinstance(payload, dict):
         return False
+    schema_version = payload.get("schema_version")
     story, source, gaps, clues = (
         payload.get("story"),
         payload.get("source"),
@@ -91,7 +93,7 @@ def _valid_presentation_manifest(payload: object) -> bool:
         payload.get("top_clues"),
     )
     return all((
-        payload.get("schema_version") == 2,
+        schema_version in SUPPORTED_PRESENTATION_SCHEMA_VERSIONS,
         payload.get("status") == "completed",
         isinstance(payload.get("title"), str),
         isinstance(payload.get("disclosure"), str),
@@ -103,7 +105,55 @@ def _valid_presentation_manifest(payload: object) -> bool:
         all(_valid_presentation_clue(item) for item in clues) if isinstance(clues, list) else False,
         isinstance(payload.get("render"), dict),
         isinstance(payload.get("output"), dict),
+        _valid_extended_presentation(payload, schema_version),
     ))
+
+
+def _valid_extended_presentation(payload: dict, schema_version: object) -> bool:
+    if schema_version == 2:
+        return True
+    return (
+        _valid_evidence_overview(payload.get("evidence_overview"))
+        and _valid_presentation_method(payload.get("method"))
+    )
+
+
+def _valid_evidence_overview(value: object) -> bool:
+    numeric_fields = (
+        "observed_seconds", "missing_seconds", "tracked_entity_count",
+        "people_count", "vehicle_count", "clue_count",
+    )
+    return (
+        isinstance(value, dict)
+        and isinstance(value.get("summary"), str)
+        and all(
+            isinstance(value.get(field), (int, float))
+            and not isinstance(value.get(field), bool)
+            for field in numeric_fields
+        )
+    )
+
+
+def _valid_presentation_method(value: object) -> bool:
+    if not isinstance(value, dict):
+        return False
+    steps = value.get("steps")
+    return all((
+        isinstance(value.get("label"), str),
+        isinstance(value.get("description"), str),
+        isinstance(steps, list) and len(steps) <= 10,
+        all(_valid_method_step(step) for step in steps) if isinstance(steps, list) else False,
+    ))
+
+
+def _valid_method_step(value: object) -> bool:
+    return (
+        isinstance(value, dict)
+        and all(
+            isinstance(value.get(field), str)
+            for field in ("id", "title", "description", "status")
+        )
+    )
 
 
 def _valid_presentation_source(value: object) -> bool:

@@ -7,7 +7,7 @@ from domain.identity_registry import build_identity_registry, write_identity_reg
 from domain.reconstruction_plan_v2 import build_reconstruction_plan_v2, write_reconstruction_plan_v2
 from infrastructure.blender_runner import BlenderRenderRequest, BlenderRenderResult, render_with_blender
 from infrastructure.camera_motion_estimator import estimate_camera_motion
-from infrastructure.video_frames import export_video_frame
+from infrastructure.video_frames import export_forensic_context_frame
 
 
 @dataclass(frozen=True)
@@ -33,13 +33,20 @@ def prepare_and_render_gap(
     validate_visible_evidence_only(scene_report)
     hidden_range = _selected_hidden_range(scene_report, gap_index)
     artifact_paths = _artifact_paths(output_directory, gap_index, mode)
-    context_frame_path = export_video_frame(
-        video_path,
-        hidden_range[0] - 1,
-        artifact_paths.output_directory / "visible_boundary_context.jpg",
-    )
     camera_motion_report = estimate_camera_motion(video_path, scene_report)
     calibrated_scene_report = {**scene_report, "camera_motion_report": camera_motion_report}
+    context_frame_path = export_forensic_context_frame(
+        video_path,
+        hidden_range[0] - 1,
+        calibrated_scene_report,
+        artifact_paths.output_directory / "visible_boundary_context.jpg",
+    )
+    post_context_frame_path = export_forensic_context_frame(
+        video_path,
+        min(hidden_range[1] + 1, int(scene_report["video"]["frames"]) - 1),
+        calibrated_scene_report,
+        artifact_paths.output_directory / "visible_boundary_context_after.jpg",
+    )
     registry = build_identity_registry(scene_report, video_path)
     plan = build_reconstruction_plan_v2(
         calibrated_scene_report,
@@ -47,6 +54,7 @@ def prepare_and_render_gap(
         hidden_range,
         gap_index,
         context_frame_path=context_frame_path,
+        post_context_frame_path=post_context_frame_path,
     )
     write_identity_registry(registry, artifact_paths.identity_registry)
     write_reconstruction_plan_v2(plan, artifact_paths.reconstruction_plan)

@@ -104,6 +104,7 @@ class ReconstructionPlanV2Tests(unittest.TestCase):
         )
 
         self.assertTrue(plan["environment"]["hybrid_backplate_enabled"])
+        self.assertFalse(plan["environment"]["show_debug_grid"])
         self.assertEqual(
             "stabilized_visible_boundary_for_dynamic_camera",
             plan["environment"]["hybrid_backplate_reason"],
@@ -119,6 +120,18 @@ class ReconstructionPlanV2Tests(unittest.TestCase):
 
         self.assertEqual(1, len(plan["entities"]))
         self.assertEqual(2, plan["selection_report"]["candidate_count"])
+
+    def test_person_plan_carries_visible_pose_grounded_motion_profile(self) -> None:
+        before = _detection(9)
+        after = _detection(21)
+        before["pose_evidence"] = _pose_evidence()
+        after["pose_evidence"] = _pose_evidence()
+
+        plan = _build_plan(100, 100, [_track("person_1", [before, after])])
+
+        profile = plan["entities"][0]["motion_profile"]
+        self.assertEqual("yolo_pose_visible_boundaries", profile["source"])
+        self.assertEqual([9, 21], [item["frame"] for item in profile["evidence"]])
 
 
 def _build_plan(
@@ -165,6 +178,14 @@ def _detection(frame_index: int) -> dict:
         "frame": frame_index,
         "bbox": [20, 20, 60, 90],
         "confidence": 0.95,
+    }
+
+
+def _pose_evidence() -> dict:
+    return {
+        "schema_version": 1,
+        "format": "coco17_bbox_normalized",
+        "keypoints": [[0.5, 0.5, 0.9] for _ in range(17)],
     }
 
 

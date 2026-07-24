@@ -41,6 +41,13 @@ class ConfigurationValidationTests(unittest.TestCase):
         with self.assertRaisesRegex(ConfigurationValidationError, "renderer.default_mode"):
             validate_configuration(invalid_configuration)
 
+    def test_rejects_invalid_pose_confidence(self) -> None:
+        invalid_configuration = copy.deepcopy(self.configuration)
+        invalid_configuration["yolo"]["pose_confidence"] = 1.5
+
+        with self.assertRaisesRegex(ConfigurationValidationError, "pose_confidence"):
+            validate_configuration(invalid_configuration)
+
     def test_rejects_excessive_parallel_gap_renderers(self) -> None:
         invalid_configuration = copy.deepcopy(self.configuration)
         invalid_configuration["renderer"]["max_parallel_gap_renders"] = 5

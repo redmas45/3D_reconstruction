@@ -219,11 +219,14 @@ def _direction(detections: list[dict]) -> str:
 
 
 def _public_detection(detection: dict) -> dict:
-    return {
+    public_detection = {
         "frame": detection["frame"],
         "bbox": detection["bbox"],
         "confidence": round(float(detection["confidence"]), 4),
     }
+    if isinstance(detection.get("pose_evidence"), dict):
+        public_detection["pose_evidence"] = detection["pose_evidence"]
+    return public_detection
 
 
 def _summarize_track(raw_track: dict, track_id: str, fps: float) -> dict:

@@ -286,6 +286,25 @@
   line-height: 1.55;
 }
 
+.gap-patch-method,
+.gap-boundary-basis {
+  display: block;
+  margin-top: 0.55rem;
+  color: var(--muted);
+  font-size: 0.68rem;
+  line-height: 1.5;
+}
+
+.gap-patch-method {
+  color: var(--primary);
+  font-weight: 750;
+}
+
+.gap-boundary-basis {
+  padding-top: 0.5rem;
+  border-top: 1px solid var(--border);
+}
+
 .gap-clues ul {
   display: grid;
   gap: 0.3rem;

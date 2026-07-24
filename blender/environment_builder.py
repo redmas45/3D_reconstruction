@@ -15,16 +15,23 @@ def build_environment(plan: dict) -> None:
         _build_shadow_receiver(environment)
         return
     ground_material = create_material("Ground", environment["ground_color"], roughness=0.78)
-    grid_material = create_material("EvidenceGrid", environment["grid_color"], alpha=0.34, metallic=0.15)
     bpy.ops.mesh.primitive_plane_add(size=GROUND_SIZE_METERS, location=(0.0, 10.0, 0.0))
     ground = bpy.context.object
     ground.name = "Forensic_Ground"
     ground.data.materials.append(ground_material)
+    if environment.get("show_debug_grid", False):
+        _build_debug_grid(environment)
+    if environment.get("proxy_profile") == STREET_PROXY_PROFILE:
+        _build_street_proxies()
+
+
+def _build_debug_grid(environment: dict) -> None:
+    grid_material = create_material(
+        "EvidenceGrid", environment["grid_color"], alpha=0.34, metallic=0.15,
+    )
     for coordinate in range(-GRID_HALF_EXTENT, GRID_HALF_EXTENT + 1, GRID_STEP_METERS):
         _grid_line((-GRID_HALF_EXTENT, coordinate + 10.0, 0.012), (GRID_HALF_EXTENT, coordinate + 10.0, 0.012), grid_material)
         _grid_line((coordinate, -GRID_HALF_EXTENT + 10.0, 0.012), (coordinate, GRID_HALF_EXTENT + 10.0, 0.012), grid_material)
-    if environment.get("proxy_profile") == STREET_PROXY_PROFILE:
-        _build_street_proxies()
 
 
 def _build_shadow_receiver(environment: dict) -> None:

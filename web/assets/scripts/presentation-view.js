@@ -1,10 +1,16 @@
 // @ts-check
 
+import {
+  createEvidenceNarrative,
+  createPresentationOverview,
+} from "./evidence-summary-view.js";
+
 const FRAME_CAPTURE_WIDTH = 640;
 const FRAME_CAPTURE_HEIGHT = 360;
 const BOUNDARY_REVIEW_OFFSET_SECONDS = 0.15;
-const MAXIMUM_VISIBLE_STORY_POINTS = 3;
 const MAXIMUM_VISIBLE_CLUES = 3;
+
+export { createPresentationOverview };
 
 
 /**
@@ -40,8 +46,8 @@ export function createGapMarkerTrack(presentation, video) {
 export function createPresentationView(presentation, video) {
   const view = createElement("div", "presentation-view");
   view.append(
-    createStory(presentation),
-    createGapWorkspace(presentation, video),
+    createPresentationOverview(presentation),
+    createPresentationDetails(presentation, video),
   );
   return view;
 }
@@ -49,54 +55,16 @@ export function createPresentationView(presentation, video) {
 
 /**
  * @param {import("./api-client.js").PresentationManifest} presentation
+ * @param {HTMLVideoElement} video
  * @returns {HTMLElement}
  */
-function createStory(presentation) {
-  const section = createElement("section", "presentation-story");
-  const heading = createElement("div", "presentation-section-heading");
-  heading.append(
-    createElement("span", "presentation-kicker", "Evidence-grounded finding"),
-    createElement("span", "confidence-pill", confidenceLabel(presentation.story.confidence)),
+export function createPresentationDetails(presentation, video) {
+  const details = createElement("div", "presentation-details");
+  details.append(
+    createEvidenceNarrative(presentation),
+    createGapWorkspace(presentation, video),
   );
-  section.append(
-    heading,
-    createElement("h4", "", presentation.story.headline),
-    createElement("p", "presentation-summary", presentation.story.summary),
-    createStoryMetrics(presentation),
-  );
-  const points = createVisibleStoryPoints(presentation);
-  if (points.childElementCount) section.append(points);
-  if (presentation.story.warning) {
-    section.append(createElement("p", "presentation-warning", presentation.story.warning));
-  }
-  section.append(createElement("p", "presentation-disclosure", presentation.disclosure));
-  return section;
-}
-
-
-function createStoryMetrics(presentation) {
-  const metrics = createElement("div", "presentation-metrics");
-  const reconstructedFraction = presentation.output?.reconstructed_fraction
-    ?? 1 - presentation.source.observed_fraction;
-  metrics.append(
-    createMetric(`${Math.round(presentation.source.observed_fraction * 100)}%`, "visible evidence"),
-    createMetric(`${Math.round(reconstructedFraction * 100)}%`, "reconstructed"),
-    createMetric(String(presentation.gaps.length), "reviewable gaps"),
-  );
-  return metrics;
-}
-
-
-function createVisibleStoryPoints(presentation) {
-  const list = createElement("ul", "presentation-story-points");
-  const storyPoints = presentation.story.points || [];
-  const statements = storyPoints.length
-    ? storyPoints
-    : presentation.top_clues.map((clue) => clue.statement);
-  statements.slice(0, MAXIMUM_VISIBLE_STORY_POINTS).forEach((statement) => {
-    list.append(createElement("li", "", statement));
-  });
-  return list;
+  return details;
 }
 
 
@@ -113,8 +81,8 @@ function createGapWorkspace(presentation, video) {
     createElement("span", "presentation-kicker", "Gap review"),
   );
   heading.firstElementChild?.append(
-    createElement("h4", "", "Inspect the reconstruction"),
-    createElement("p", "presentation-helper", "Select a gap to compare the evidence boundaries and inferred interval."),
+    createElement("h4", "", "Review every missing interval"),
+    createElement("p", "presentation-helper", "Select a gap to see what was visible, what was inferred, and how the patch was produced."),
   );
   const tabs = createElement("div", "gap-selector");
   tabs.setAttribute("role", "tablist");
@@ -236,7 +204,15 @@ function createGapExplanation(gap) {
   const decision = createElement("section", "gap-decision");
   decision.append(
     createElement("span", "presentation-kicker", "Reconstruction decision"),
-    createElement("p", "", gap.inside_inferred),
+    createElement("p", "", gap.patch?.summary ?? gap.inside_inferred),
+  );
+  decision.append(
+    createElement("small", "gap-patch-method", gap.patch?.method ?? "Stylized 3D reconstruction"),
+    createElement(
+      "small", "gap-boundary-basis",
+      gap.patch?.boundary_basis
+        ?? "The patch is anchored to visible boundary evidence on both sides of the gap.",
+    ),
   );
   const clues = createElement("section", "gap-clues");
   clues.append(createElement("span", "presentation-kicker", "Evidence used"));

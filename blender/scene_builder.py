@@ -9,6 +9,11 @@ from environment_builder import build_environment, build_path_trail
 from frame_rate import blender_frame_rate
 from hud import build_hud
 from human_builder import build_human
+from motion_asset import (
+    MotionAssetError,
+    build_rigged_human,
+    motion_asset_available,
+)
 from render_device import CYCLES_RENDER_ENGINE, configure_cycles_render
 from render_passes import (
     ACTOR_PASS_INDEX,
@@ -39,7 +44,7 @@ def build_scene(plan: dict) -> bpy.types.Scene:
     show_debug_paths = plan["environment"].get("show_debug_paths", False)
     for entity in plan["entities"]:
         objects_before_entity = set(scene.objects)
-        parts = build_human(entity) if entity["kind"] in RENDERABLE_HUMANS else build_vehicle(entity)
+        parts = _build_actor(entity, plan)
         align_entity_scale(parts, entity, scene, camera)
         animate_entity(parts, entity, plan["frame_count"], float(plan["fps"]))
         if show_debug_paths:
@@ -57,6 +62,22 @@ def build_scene(plan: dict) -> bpy.types.Scene:
     scene.frame_start = 1
     scene.frame_end = plan["frame_count"]
     return scene
+
+
+def _build_actor(entity: dict, plan: dict) -> dict:
+    if entity["kind"] not in RENDERABLE_HUMANS:
+        return build_vehicle(entity)
+    if entity["fidelity_tier"] == "weak" or not motion_asset_available():
+        return build_human(entity)
+    try:
+        return build_rigged_human(
+            entity,
+            int(plan["frame_count"]),
+            float(plan["fps"]),
+        )
+    except MotionAssetError as error:
+        print(f"MOTION_ASSET_FALLBACK entity={entity['id']} reason={error}", flush=True)
+        return build_human(entity)
 
 
 def clear_scene() -> None:
@@ -90,6 +111,20 @@ def configure_render(scene: bpy.types.Scene, plan: dict) -> None:
     scene.world.color = (0.006, 0.010, 0.018)
     scene.render.use_file_extension = True
     scene.view_settings.look = "AgX - Medium High Contrast"
+    _configure_forensic_outlines(scene)
+
+
+def _configure_forensic_outlines(scene: bpy.types.Scene) -> None:
+    scene.render.use_freestyle = True
+    scene.render.line_thickness = 1.15
+    if not hasattr(scene, "view_layers"):
+        return
+    line_sets = scene.view_layers["ViewLayer"].freestyle_settings.linesets
+    if not line_sets:
+        return
+    line_style = line_sets[0].linestyle
+    line_style.color = (0.015, 0.025, 0.035)
+    line_style.alpha = 0.80
 
 
 def _configure_workbench(scene: bpy.types.Scene) -> None:

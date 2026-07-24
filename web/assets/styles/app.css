@@ -305,16 +305,17 @@ h2 { font-size: 1.35rem; line-height: 1.2; margin-bottom: 0; letter-spacing: -0.
 .empty-film { width: 42px; height: 42px; display: grid; place-items: center; border-radius: 50%; border: 1px solid var(--border); color: var(--primary); font-size: 0.72rem; }
 
 .output-grid { display: grid; grid-template-columns: 1fr; gap: 1.2rem; }
-.output-card { display: grid; grid-template-columns: minmax(360px, 0.92fr) minmax(420px, 1.08fr); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; background: var(--surface); transition: transform 0.2s, border-color 0.2s; }
+.output-card { display: grid; grid-template-columns: 1fr; border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; background: var(--surface); transition: transform 0.2s, border-color 0.2s; }
 .output-card:hover { transform: translateY(-3px); border-color: rgba(12, 202, 210, 0.32); }
 .video-frame { min-width: 0; padding: 1rem; background: #09090a; align-self: start; }
+.video-frame > * { width: min(100%, 980px); margin-right: auto; margin-left: auto; }
 .video-player { aspect-ratio: 16 / 9; background: #020203; }
 .video-player video { display: block; width: 100%; height: 100%; object-fit: contain; }
 .gap-marker-track { position: relative; height: 18px; margin-top: 0.6rem; overflow: hidden; border-radius: 999px; background: #242429; }
 .gap-marker { position: absolute; top: 0; height: 100%; min-width: 5px; border: 0; border-radius: 2px; background: var(--primary); cursor: pointer; opacity: 0.9; }
 .gap-marker:hover, .gap-marker:focus-visible { background: #67f6fb; outline: 2px solid rgba(103, 246, 251, 0.4); outline-offset: 1px; }
 .output-body { min-width: 0; padding: 1.25rem; }
-.output-body h3 { font-size: 0.9rem; margin: 0 0 0.35rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.output-body > h3 { font-size: 0.9rem; margin: 0 0 0.35rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .output-meta { color: var(--muted); font-size: 0.68rem; margin: 0; }
 .output-actions { display: grid; grid-template-columns: 1fr auto; gap: 0.65rem; margin-top: 1rem; }
 .action-button { min-height: 36px; background: var(--surface-raised); border-color: var(--border); }

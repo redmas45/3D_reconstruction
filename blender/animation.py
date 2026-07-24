@@ -3,8 +3,17 @@ import math
 from mathutils import Vector
 
 
-ANIMATION_SAMPLE_STEP = 2
-MAXIMUM_WALK_SWING_RADIANS = 0.58
+ANIMATION_SAMPLE_STEP = 1
+MAXIMUM_WALK_SWING_RADIANS = 0.46
+MAXIMUM_KNEE_BEND_RADIANS = 0.68
+BASE_ELBOW_BEND_RADIANS = 0.16
+ADDITIONAL_ELBOW_BEND_RADIANS = 0.24
+FOOT_LEVEL_COMPENSATION = 0.88
+HUMAN_BODY_BOB_METERS = 0.025
+HUMAN_BODY_SWAY_RADIANS = 0.028
+UPPER_LEG_LENGTH_METERS = 0.46
+LOWER_LEG_TO_SOLE_METERS = 0.52
+MAXIMUM_STANCE_COMPENSATION_METERS = 0.10
 HUMAN_STRIDE_LENGTH_METERS = 1.35
 MAXIMUM_STEERING_RADIANS = math.radians(32.0)
 MINIMUM_DIRECTION_DISTANCE_METERS = 0.001
@@ -31,6 +40,7 @@ def animate_entity(
         for frame_index in sample_frames
     ]
     _animate_path(parts, entity, sample_frames, positions, fps)
+    _set_linear_object_interpolation(parts)
     _animate_lifecycle(parts, entity, frame_count, fps)
 
 
@@ -68,7 +78,7 @@ def _animate_path(
             previous_heading, movement, entity, frame_index, sample_frames, fps,
         )
         root.location = position
-        if heading is not None:
+        if heading is not None and not parts.get("lock_facing_camera", False):
             root.rotation_euler[2] = heading
         _keyframe_root(root, frame_index)
         _animate_articulation(
@@ -126,13 +136,86 @@ def _animate_walk_cycle(
 ) -> None:
     phase_offset = float(entity["animation"]["phase_offset"]) * math.tau
     phase = distance_travelled / HUMAN_STRIDE_LENGTH_METERS * math.tau + phase_offset
-    swing = math.sin(phase) * MAXIMUM_WALK_SWING_RADIANS
-    for index, leg in enumerate(parts["legs"]):
-        leg.rotation_euler[0] = swing if index == 0 else -swing
-        leg.keyframe_insert("rotation_euler", frame=frame_index)
-    for index, arm in enumerate(parts["arms"]):
-        arm.rotation_euler[0] = -swing * 0.72 if index == 0 else swing * 0.72
+    _animate_body_weight(parts, frame_index, phase)
+    _animate_legs(parts, frame_index, phase)
+    _animate_arms(parts, frame_index, phase)
+
+
+def _animate_body_weight(parts: dict, frame_index: int, phase: float) -> None:
+    body_rig = parts.get("rig")
+    if body_rig is None:
+        return
+    height_scale = float(parts.get("height_scale", 1.0))
+    body_rig.location.z = (
+        abs(math.sin(phase)) * HUMAN_BODY_BOB_METERS * height_scale
+    )
+    body_rig.rotation_euler[1] = math.sin(phase) * HUMAN_BODY_SWAY_RADIANS
+    body_rig.keyframe_insert("location", frame=frame_index)
+    body_rig.keyframe_insert("rotation_euler", frame=frame_index)
+
+
+def _animate_legs(parts: dict, frame_index: int, phase: float) -> None:
+    knees = parts.get("knees", [])
+    feet = parts.get("feet", [])
+    base_heights = parts.get("leg_base_heights", [])
+    height_scale = float(parts.get("height_scale", 1.0))
+    for index, (leg, knee, foot) in enumerate(zip(parts["legs"], knees, feet)):
+        leg_phase = phase + index * math.pi
+        swing = math.sin(leg_phase) * MAXIMUM_WALK_SWING_RADIANS
+        knee_bend = (
+            max(0.0, math.sin(leg_phase + math.pi / 3.0))
+            * MAXIMUM_KNEE_BEND_RADIANS
+        )
+        leg.rotation_euler[0] = swing
+        knee.rotation_euler[0] = knee_bend
+        foot.rotation_euler[0] = -(swing + knee_bend) * FOOT_LEVEL_COMPENSATION
+        if index < len(base_heights):
+            leg.location.z = (
+                float(base_heights[index])
+                - _stance_vertical_compensation(
+                    swing,
+                    knee_bend,
+                    height_scale,
+                )
+            )
+            leg.keyframe_insert("location", frame=frame_index)
+        for control in (leg, knee, foot):
+            control.keyframe_insert("rotation_euler", frame=frame_index)
+
+
+def _stance_vertical_compensation(
+    swing: float,
+    knee_bend: float,
+    height_scale: float,
+) -> float:
+    rest_reach = (
+        UPPER_LEG_LENGTH_METERS + LOWER_LEG_TO_SOLE_METERS
+    ) * height_scale
+    animated_reach = (
+        UPPER_LEG_LENGTH_METERS * height_scale * math.cos(swing)
+        + LOWER_LEG_TO_SOLE_METERS * height_scale * math.cos(swing + knee_bend)
+    )
+    stance_weight = 1.0 - min(1.0, knee_bend / MAXIMUM_KNEE_BEND_RADIANS)
+    shortening = max(0.0, rest_reach - animated_reach)
+    return min(
+        MAXIMUM_STANCE_COMPENSATION_METERS * height_scale,
+        shortening * stance_weight,
+    )
+
+
+def _animate_arms(parts: dict, frame_index: int, phase: float) -> None:
+    elbows = parts.get("elbows", [])
+    for index, (arm, elbow) in enumerate(zip(parts["arms"], elbows)):
+        arm_phase = phase + index * math.pi
+        arm.rotation_euler[0] = (
+            -math.sin(arm_phase) * MAXIMUM_WALK_SWING_RADIANS * 0.68
+        )
+        elbow.rotation_euler[0] = (
+            BASE_ELBOW_BEND_RADIANS
+            + max(0.0, -math.sin(arm_phase)) * ADDITIONAL_ELBOW_BEND_RADIANS
+        )
         arm.keyframe_insert("rotation_euler", frame=frame_index)
+        elbow.keyframe_insert("rotation_euler", frame=frame_index)
 
 
 def _animate_wheels(
@@ -148,10 +231,23 @@ def _animate_wheels(
     rotation = distance_travelled / float(wheel_radius)
     steering = _steering_angle(previous_heading, heading)
     steering_wheels = set(parts.get("steering_wheels", []))
+    spin_axis = int(parts.get("wheel_spin_axis", 0))
     for wheel in parts["wheels"]:
-        wheel.rotation_euler[0] = rotation
-        wheel.rotation_euler[2] = steering if wheel in steering_wheels else 0.0
+        wheel.rotation_euler[spin_axis] = -rotation
+        if spin_axis != 2:
+            wheel.rotation_euler[2] = steering if wheel in steering_wheels else 0.0
         wheel.keyframe_insert("rotation_euler", frame=frame_index)
+
+
+def _set_linear_object_interpolation(parts: dict) -> None:
+    controls = [parts.get("root"), parts.get("rig")]
+    for key in ("arms", "elbows", "legs", "knees", "feet", "wheels"):
+        controls.extend(parts.get(key, []))
+    for control in (item for item in controls if item is not None):
+        action = getattr(getattr(control, "animation_data", None), "action", None)
+        for curve in getattr(action, "fcurves", []):
+            for keyframe in curve.keyframe_points:
+                keyframe.interpolation = "LINEAR"
 
 
 def _steering_angle(
@@ -232,10 +328,10 @@ def _animate_lifecycle(
         max(2, frame_count // 3),
     )
     if lifecycle == "continuous":
-        keyframes = _continuous_opacity_keyframes(frame_count, edge_frame)
+        keyframes = [(1, 1.0), (frame_count, 1.0)]
     elif lifecycle == "enters":
         keyframes = [
-            (1, 0.0), (transition_frame, 1.0), (frame_count, EDGE_OPACITY_FACTOR),
+            (1, 0.0), (transition_frame, 1.0), (frame_count, 1.0),
         ]
     elif lifecycle == "uncertain":
         keyframes = [
@@ -243,24 +339,12 @@ def _animate_lifecycle(
         ]
     else:
         keyframes = [
-            (1, EDGE_OPACITY_FACTOR),
+            (1, 1.0),
             (frame_count - transition_frame, 1.0),
             (frame_count, 0.0),
         ]
     for material in parts.get("materials", []):
         _keyframe_material_alpha(material, keyframes)
-
-
-def _continuous_opacity_keyframes(
-    frame_count: int,
-    edge_frame: int,
-) -> list[tuple[int, float]]:
-    return [
-        (1, EDGE_OPACITY_FACTOR),
-        (edge_frame, 1.0),
-        (max(edge_frame, frame_count - edge_frame), 1.0),
-        (frame_count, EDGE_OPACITY_FACTOR),
-    ]
 
 
 def _keyframe_material_alpha(

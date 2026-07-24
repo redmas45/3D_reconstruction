@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 
 from domain.camera_calibration import build_camera_contract
+from domain.motion_profile import build_motion_profile
 from domain.path_prediction import build_entity_prediction, fidelity_tier
 from domain.render_resolution import adaptive_render_scale_percent
 
@@ -9,11 +10,13 @@ from domain.render_resolution import adaptive_render_scale_percent
 PLAN_SCHEMA_VERSION = 2
 PLAN_STRATEGY = "ai_inferred_forensic_3d"
 RENDERABLE_CLASSES = {"person", "car", "truck", "bus", "motorcycle", "bicycle"}
-DEFAULT_MAX_RENDER_ENTITIES = 5
+DEFAULT_MAX_RENDER_ENTITIES = 3
 MINIMUM_PRESENTATION_CONFIDENCE = 0.45
 MINIMUM_PRESENTATION_RELEVANCE = 0.12
 MAXIMUM_WEAK_PRESENTATION_ENTITIES = 0
 MAXIMUM_DUPLICATE_BOUNDARY_IOU = 0.55
+MINIMUM_VISIBLE_ANCHOR_FRACTION = 0.05
+MAXIMUM_VISIBLE_ANCHOR_FRACTION = 0.95
 LIFECYCLE_FACTORS = {"continuous": 1.0, "enters": 0.75, "exits": 0.75, "uncertain": 0.50}
 DEFAULT_RENDER_CONFIGURATION = {
     "engine": "BLENDER_EEVEE_NEXT",
@@ -38,6 +41,7 @@ def build_reconstruction_plan_v2(
     gap_index: int,
     maximum_entities: int = DEFAULT_MAX_RENDER_ENTITIES,
     context_frame_path: Path | None = None,
+    post_context_frame_path: Path | None = None,
     render_configuration: dict | None = None,
 ) -> dict:
     video = scene_report["video"]
@@ -50,7 +54,8 @@ def build_reconstruction_plan_v2(
     selected_entities = _select_presentation_entities(entities, maximum_entities)
     plan = _plan_contract(
         hidden_range, gap_index, video, camera, identity_registry,
-        entities, selected_entities, context_frame_path, render_configuration,
+        entities, selected_entities, context_frame_path, post_context_frame_path,
+        render_configuration,
     )
     validate_reconstruction_plan_v2(plan)
     return plan
@@ -65,6 +70,7 @@ def _plan_contract(
     entities: list[dict],
     selected_entities: list[dict],
     context_frame_path: Path | None,
+    post_context_frame_path: Path | None,
     render_configuration: dict | None,
 ) -> dict:
     frame_count = hidden_range[1] - hidden_range[0] + 1
@@ -79,7 +85,7 @@ def _plan_contract(
         "overall_confidence": _overall_confidence(selected_entities, camera),
         "camera": camera,
         "environment": _environment_contract(
-            hidden_range[0] - 1, context_frame_path, selected_entities,
+            hidden_range[0] - 1, context_frame_path, post_context_frame_path,
             camera, render_configuration,
         ),
         "render": _render_contract(render_configuration, video),
@@ -95,7 +101,7 @@ def _plan_contract(
 def _environment_contract(
     backplate_frame: int,
     context_frame_path: Path | None,
-    rendered_entities: list[dict],
+    post_context_frame_path: Path | None,
     camera: dict,
     render_configuration: dict | None,
 ) -> dict:
@@ -110,7 +116,12 @@ def _environment_contract(
         "grid_color": [0.04, 0.62, 0.68],
         "backplate_frame": backplate_frame,
         "context_frame_path": str(context_frame_path.resolve()) if context_frame_path else None,
+        "post_context_frame_path": (
+            str(post_context_frame_path.resolve()) if post_context_frame_path else None
+        ),
+        "context_treatment": "cleaned_blurred_boundary_transition",
         "presentation_mode": True,
+        "show_debug_grid": False,
         "show_debug_paths": False,
         "proxy_profile": "neutral",
         "hybrid_backplate_enabled": hybrid_enabled,
@@ -187,6 +198,8 @@ def _render_contract(render_configuration: dict | None, video: dict) -> dict:
 
 
 def _exclusion_reason(entity: dict) -> str:
+    if not _visual_anchor_is_fully_visible(entity):
+        return "boundary_clipped"
     if entity["relevance_score"] < MINIMUM_PRESENTATION_RELEVANCE:
         return "below_relevance_threshold"
     if entity["confidence"] < MINIMUM_PRESENTATION_CONFIDENCE:
@@ -250,7 +263,8 @@ def _entity_contract(
     )
     speed = prediction["speed_meters_per_second"]
     visual_anchor = _visual_anchor(track, hidden_range, video)
-    return {
+    motion_profile = _motion_profile(track, hidden_range, speed, identity)
+    entity = {
         "id": track["id"],
         "identity_registry_id": track["id"],
         "kind": track["class_name"],
@@ -265,7 +279,10 @@ def _entity_contract(
         "animation": {
             "state": "idle" if speed < 0.15 else "walk",
             "speed_meters_per_second": speed,
-            "phase_offset": identity["animation_phase"],
+            "phase_offset": (
+                motion_profile["phase_offset"]
+                if motion_profile else identity["animation_phase"]
+            ),
         },
         "boundary_evidence": prediction["boundary_evidence"],
         "path_prediction": prediction["path_prediction"],
@@ -277,6 +294,25 @@ def _entity_contract(
             "alternative_paths": 0 if confidence >= 0.75 else 2,
         },
     }
+    if motion_profile is not None:
+        entity["motion_profile"] = motion_profile
+    return entity
+
+
+def _motion_profile(
+    track: dict,
+    hidden_range: tuple[int, int],
+    speed: float,
+    identity: dict,
+) -> dict | None:
+    if track["class_name"] != "person":
+        return None
+    return build_motion_profile(
+        track,
+        hidden_range,
+        speed,
+        float(identity["animation_phase"]),
+    )
 
 
 def _uncertainty_radius(confidence: float, duration_seconds: float) -> float:
@@ -359,6 +395,7 @@ def _select_presentation_entities(entities: list[dict], maximum_entities: int) -
         entity for entity in ranked_entities
         if entity["confidence"] >= MINIMUM_PRESENTATION_CONFIDENCE
         and entity["relevance_score"] >= MINIMUM_PRESENTATION_RELEVANCE
+        and _visual_anchor_is_fully_visible(entity)
     ]
     weak_entities = [] if MAXIMUM_WEAK_PRESENTATION_ENTITIES == 0 else [
         entity for entity in ranked_entities
@@ -396,6 +433,20 @@ def _without_boundary_duplicates(entities: list[dict]) -> list[dict]:
             continue
         retained.append(entity)
     return retained
+
+
+def _visual_anchor_is_fully_visible(entity: dict) -> bool:
+    anchor = entity.get("visual_anchor", {})
+    center_x = float(anchor.get("center_x_fraction", 0.0))
+    ground_y = float(anchor.get("ground_y_fraction", 1.0))
+    half_width = float(anchor.get("width_fraction", 1.0)) * 0.5
+    height = float(anchor.get("height_fraction", 1.0))
+    return all((
+        center_x - half_width >= MINIMUM_VISIBLE_ANCHOR_FRACTION,
+        center_x + half_width <= MAXIMUM_VISIBLE_ANCHOR_FRACTION,
+        ground_y <= MAXIMUM_VISIBLE_ANCHOR_FRACTION,
+        ground_y - height >= MINIMUM_VISIBLE_ANCHOR_FRACTION,
+    ))
 
 
 def _entities_overlap(first: dict, second: dict) -> bool:
@@ -442,9 +493,34 @@ def _validate_entity(entity: dict) -> None:
     waypoints = path_prediction.get("waypoints")
     if not isinstance(waypoints, list) or len(waypoints) < 3:
         raise PlanValidationError("Entity path must contain at least three waypoints")
+    _validate_motion_profile(entity.get("motion_profile"))
     kinematics = entity.get("kinematics")
     if kinematics is not None:
         _validate_kinematics(kinematics)
+
+
+def _validate_motion_profile(value: object) -> None:
+    if value is None:
+        return
+    if not isinstance(value, dict) or value.get("schema_version") != 1:
+        raise PlanValidationError("Entity motion profile is invalid")
+    if value.get("clip") not in {"idle", "walk", "brisk_walk", "run"}:
+        raise PlanValidationError("Entity motion clip is unsupported")
+    if value.get("source") not in {
+        "yolo_pose_visible_boundaries",
+        "kinematic_fallback",
+    }:
+        raise PlanValidationError("Entity motion source is unsupported")
+    for field_name in ("phase_offset", "cadence_scale", "blend_seconds", "pose_confidence"):
+        field_value = value.get(field_name)
+        if isinstance(field_value, bool) or not isinstance(field_value, (int, float)):
+            raise PlanValidationError(f"Entity motion profile {field_name} must be numeric")
+    if not 0.0 <= float(value["phase_offset"]) <= 1.0:
+        raise PlanValidationError("Entity motion phase offset is invalid")
+    if not 0.0 <= float(value["pose_confidence"]) <= 1.0:
+        raise PlanValidationError("Entity motion pose confidence is invalid")
+    if float(value["cadence_scale"]) <= 0.0 or float(value["blend_seconds"]) < 0.0:
+        raise PlanValidationError("Entity motion timing is invalid")
 
 
 def _validate_visual_anchor(value: object) -> None:

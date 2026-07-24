@@ -198,6 +198,7 @@ def write_report(
         "overall_confidence": plan["overall_confidence"],
         "identity_registry": plan["identity_registry"],
         "entity_fidelity_counts": _fidelity_counts(plan),
+        "motion_profiles": _motion_profiles(plan),
         "selection_report": plan["selection_report"],
         "boundary_residuals": _boundary_residuals(plan),
         "output_path": str(output_path),
@@ -247,6 +248,28 @@ def _fidelity_counts(plan: dict) -> dict[str, int]:
         tier = str(entity["fidelity_tier"])
         counts[tier] = counts.get(tier, 0) + 1
     return counts
+
+
+def _motion_profiles(plan: dict) -> list[dict]:
+    return [
+        {
+            "id": entity["id"],
+            "clip": entity.get("motion_profile", {}).get(
+                "clip",
+                entity.get("animation", {}).get("state", "idle"),
+            ),
+            "source": entity.get("motion_profile", {}).get(
+                "source",
+                "kinematic_fallback",
+            ),
+            "pose_confidence": entity.get("motion_profile", {}).get(
+                "pose_confidence",
+                0.0,
+            ),
+        }
+        for entity in plan["entities"]
+        if entity["kind"] == "person"
+    ]
 
 
 def _boundary_residuals(plan: dict) -> list[dict]:

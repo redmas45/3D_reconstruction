@@ -29,7 +29,11 @@ class PresentationManifestTests(unittest.TestCase):
                     "hidden_ranges": [[200, 319]],
                     "missing_fraction_actual": 0.25,
                 },
-                {"scene_summary": "Visible street activity."},
+                {
+                    "people_count": 1,
+                    "vehicle_count": 0,
+                    "tracks": [{"id": "person_1"}],
+                },
                 [plan_path],
                 work_directory,
                 work_directory / "result.mp4",
@@ -50,6 +54,14 @@ class PresentationManifestTests(unittest.TestCase):
             manifest["gaps"][0]["entities"][0]["selected_hypothesis_id"],
         )
         self.assertEqual("azure", manifest["story"]["planning_mode"])
+        self.assertEqual(3, manifest["schema_version"])
+        self.assertEqual(90.0, manifest["evidence_overview"]["observed_seconds"])
+        self.assertEqual(1, manifest["evidence_overview"]["tracked_entity_count"])
+        self.assertEqual("Public decision trace", manifest["method"]["label"])
+        self.assertEqual(
+            "Stylized 3D actors composited over observed scene context",
+            manifest["gaps"][0]["patch"]["method"],
+        )
         self.assertNotIn("truth_path", json.dumps(manifest).lower())
 
 

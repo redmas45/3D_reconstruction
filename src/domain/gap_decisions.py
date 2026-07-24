@@ -2,6 +2,7 @@
 
 import copy
 
+from domain.motion_profile import synchronize_motion_profile
 from domain.reconstruction_plan_v2 import validate_reconstruction_plan_v2
 
 
@@ -315,6 +316,7 @@ def _apply_entity_decision(entity: dict, decision: dict, hypotheses: dict[str, d
     entity["animation"]["speed_meters_per_second"] = hypothesis["speed_meters_per_second"]
     if hypothesis["action"] == "proxy":
         entity["fidelity_tier"] = "weak"
+    synchronize_motion_profile(entity)
     entity["reasoning_decision_v2"] = copy.deepcopy(decision)
 
 

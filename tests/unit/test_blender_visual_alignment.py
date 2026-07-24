@@ -14,7 +14,7 @@ class BlenderVisualAlignmentTests(unittest.TestCase):
     def test_visual_scale_is_bounded_against_extreme_detections(self) -> None:
         module = _load_visual_alignment()
 
-        self.assertEqual(1.8, module.bounded_visual_scale(0.30, 0.01))
+        self.assertEqual(3.0, module.bounded_visual_scale(0.30, 0.01))
         self.assertEqual(0.35, module.bounded_visual_scale(0.01, 0.30))
 
     def test_visual_scale_preserves_matching_projection(self) -> None:

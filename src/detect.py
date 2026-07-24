@@ -7,6 +7,7 @@ import numpy as np
 from ultralytics import YOLO
 
 from domain.cancellation import CancellationCheck, raise_if_cancelled
+from pose_detection import attach_pose_evidence, pose_candidates
 
 
 RELEVANT_COCO_CLASSES = {
@@ -102,6 +103,7 @@ def _box_detection(
 
 def _detect_range(
     model: YOLO,
+    pose_model: YOLO | None,
     capture: cv2.VideoCapture,
     frame_range: tuple[int, int],
     segment_index: int,
@@ -112,6 +114,12 @@ def _detect_range(
     capture.set(cv2.CAP_PROP_POS_FRAMES, start)
     detections: list[dict] = []
     processed_frames = 0
+    pose_frames = _pose_sample_frames(
+        start,
+        end,
+        settings["frame_stride"],
+        settings["pose_boundary_samples"],
+    )
     for frame_index in range(start, end + 1):
         raise_if_cancelled(cancellation_check)
         success, frame = capture.read()
@@ -125,9 +133,63 @@ def _detect_range(
         processed_frames += 1
         if not results or len(results[0].boxes) == 0:
             continue
-        for box in results[0].boxes:
-            detections.append(_box_detection(box, frame, frame_index, segment_index, scale, model.names))
+        frame_detections = [
+            _box_detection(box, frame, frame_index, segment_index, scale, model.names)
+            for box in results[0].boxes
+        ]
+        detections.extend(
+            _with_pose_evidence(
+                pose_model,
+                resized,
+                frame_index,
+                pose_frames,
+                scale,
+                frame_detections,
+                settings,
+                cancellation_check,
+            )
+        )
     return detections, processed_frames
+
+
+def _with_pose_evidence(
+    pose_model: YOLO | None,
+    resized_frame: np.ndarray,
+    frame_index: int,
+    pose_frames: set[int],
+    scale: float,
+    detections: list[dict],
+    settings: dict,
+    cancellation_check: CancellationCheck | None,
+) -> list[dict]:
+    if (
+        pose_model is None
+        or frame_index not in pose_frames
+        or not any(item["class_name"] == "person" for item in detections)
+    ):
+        return detections
+    results = pose_model.predict(
+        resized_frame,
+        classes=[0],
+        conf=settings["pose_confidence"],
+        verbose=False,
+    )
+    raise_if_cancelled(cancellation_check)
+    candidates = pose_candidates(results[0], scale) if results else []
+    return attach_pose_evidence(detections, candidates)
+
+
+def _pose_sample_frames(
+    start: int,
+    end: int,
+    frame_stride: int,
+    samples_per_boundary: int,
+) -> set[int]:
+    sampled_frames = list(range(start, end + 1, frame_stride))
+    if not sampled_frames:
+        return set()
+    sample_count = max(1, samples_per_boundary)
+    return set(sampled_frames[:sample_count] + sampled_frames[-sample_count:])
 
 
 def detect_scene_objects(
@@ -139,6 +201,9 @@ def detect_scene_objects(
     downscale_width: int = 960,
     conf: float = 0.25,
     tracker_config: str | None = None,
+    pose_model_name: str | None = None,
+    pose_confidence: float = 0.25,
+    pose_boundary_samples: int = 2,
     progress_callback: Callable[[int, int], None] | None = None,
     cancellation_check: CancellationCheck | None = None,
 ) -> list[dict]:
@@ -146,6 +211,7 @@ def detect_scene_objects(
     print(f"[Detector] Initializing {model_name} for sequential scene tracking...")
     raise_if_cancelled(cancellation_check)
     model = YOLO(model_name)
+    pose_model = YOLO(pose_model_name) if pose_model_name else None
     raise_if_cancelled(cancellation_check)
     capture = cv2.VideoCapture(video_path)
     if not capture.isOpened():
@@ -158,6 +224,8 @@ def detect_scene_objects(
         "frame_stride": max(1, int(frame_stride)),
         "downscale_width": max(0, int(downscale_width)),
         "track_args": track_args,
+        "pose_confidence": max(0.0, min(1.0, float(pose_confidence))),
+        "pose_boundary_samples": max(1, int(pose_boundary_samples)),
     }
     detections: list[dict] = []
     processed_frames = 0
@@ -168,7 +236,13 @@ def detect_scene_objects(
             if segment_index:
                 _reset_tracker(model)
             segment_detections, segment_frames = _detect_range(
-                model, capture, frame_range, segment_index, settings, cancellation_check
+                model,
+                pose_model,
+                capture,
+                frame_range,
+                segment_index,
+                settings,
+                cancellation_check,
             )
             detections.extend(segment_detections)
             processed_frames += segment_frames
@@ -178,6 +252,8 @@ def detect_scene_objects(
     finally:
         capture.release()
         del model
+        if pose_model is not None:
+            del pose_model
         _release_cuda_cache()
     print(f"[Detector] Finished: {len(detections)} detections from {processed_frames} sampled frames.")
     return detections

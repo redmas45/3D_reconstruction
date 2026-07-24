@@ -10,7 +10,7 @@ For every supported video uploaded through the local UI or selected in the Colab
 2. Uses reviewable 5–7 second gaps for videos at least 60 seconds long, with a 1–3 second compact policy for shorter inputs.
 3. Makes the combined hidden duration exactly the configured 25% at frame precision, subject only to integer frame rounding.
 4. Keeps the remaining 75% as visible evidence with live YOLO classifications.
-5. Tracks people, vehicles, bags, and relevant objects through the visible ranges.
+5. Tracks people, vehicles, bags, and relevant objects through the visible ranges; a lightweight YOLO pose pass records COCO-17 joints for visible people only.
 6. Writes a structured evidence ledger containing visible observations, identities, motion, scene clues, conflicts, and unknowns.
 7. Shows those clues in the UI before reconstruction decisions are rendered.
 8. Optionally asks a configured Azure OpenAI deployment to select and explain bounded reconstruction hypotheses from the ledger and selected visible keyframes.
@@ -50,16 +50,17 @@ The default hidden-gap renderer uses headless Blender 4.5 LTS:
 
 - source-resolution-matched output with a visible-person ground-contact/horizon fit when evidence supports it, otherwise an explicit generic prior
 - evidence-aligned neutral geometry only; automatic building/street proxy generation is disabled because unsupported scene blocks can obscure the source evidence
-- procedural articulated people and simplified vehicles
+- outlined low-poly people and class-aware car/truck/bus silhouettes with explicit contact shadows
 - global per-track body proportions and evidence-derived clothing colors
 - duration-aware three-to-eight-waypoint paths for continuous/exiting tracks; entering tracks are reverse-inferred from their first post-gap evidence and labeled accordingly
-- class-specific maximum speed, acceleration, and turn-rate contracts with ground contact, distance-driven gait, wheel rotation, and vehicle steering
+- class-specific maximum speed, acceleration, and turn-rate contracts with ground contact, a reusable rigged-human/NLA motion library, visible-pose gait-phase alignment, visible wheel-spoke rotation, and vehicle steering
 - confidence-based solid, translucent, or simplified silhouette fidelity
-- a small persistent `RECONSTRUCTED · AI-INFERRED` badge, uncertainty rings, and explicit non-ground-truth disclosure
+- a small persistent `AI RECONSTRUCTION` badge, uncertainty rings, and explicit non-ground-truth disclosure
 - no black transition shutters or large entering/returning captions in production output
-- a sharp evidence-backplate profile for static and experimental moving-camera footage: the last visible boundary frame remains visible while bounded actors, contact shadows, and the minimal badge are composited over it
-- one pinhole camera model shared by image-to-ground mapping and Blender, robust camera-height estimation from visible person geometry, boundary-box-driven actor scaling, path overshoot clipping, and same-lifecycle duplicate suppression
-- sparse 6 fps PNG rendering with an adaptive 960–1280-pixel long-edge target and two Cycles samples by default, followed by exact source-FPS and frame-count normalization
+- a visible-evidence context profile for static footage: foreground detections are excluded from a distributed temporal background estimate, the cleaned before/after boundary frames crossfade through the gap, and only bounded inferred actors are composited over them
+- one pinhole camera model shared by image-to-ground mapping and Blender, robust camera-height estimation from visible person geometry, boundary-box-driven actor scaling, clipped-boundary rejection, path overshoot clipping, and same-lifecycle duplicate suppression
+- a three-entity presentation budget; continuous actors remain solid, entering actors fade in, and exiting actors fade out
+- sparse 8 fps PNG rendering with an adaptive 960–1280-pixel long-edge target and two Cycles samples by default, followed by exact source-FPS and frame-count normalization
 - atomic frame manifests so a rerun skips valid completed PNGs inside an interrupted gap
 - same-render diagnostic environment, actor, uncertainty, HUD, depth, and shadow passes at five review poses
 - a heaviest-gap runtime benchmark and hard 120-minute predicted-runtime gate before remaining gaps begin
@@ -130,7 +131,7 @@ The interface opens at `http://127.0.0.1:8000` and provides:
 - persistent dark/light theme toggle in the top-right navigation
 - selectable Blender forensic-3D or explicit 2.5D fallback rendering
 - evidence clues, a whole-video reconstructed story, observed/inferred/observed gap timelines, and per-entity decisions with confidence and unknowns
-- a judge-facing completed-result layout with player gap markers, visible story summary, strongest clues, reviewable gap cards, and a collapsed technical audit
+- a judge-facing completed-result dashboard with a full-video finding, observed 75% versus reconstructed 25% metrics, player gap markers, strongest visible clues, a concise public decision trace, reviewable Before / Reconstruction / After gap cards, and a collapsed technical audit
 - a single-instance project lock, loopback-only binding, and Host validation so a second app or browser DNS rebinding cannot interfere with active jobs
 
 Useful server options:
@@ -150,7 +151,7 @@ The notebook installs Blender 4.5 LTS and FFmpeg, verifies PyTorch CUDA for YOLO
 
 Azure values can come from Colab Secrets or from a separately uploaded local `.env`. Colab cannot read a file that remains on the laptop, so the notebook opens an upload picker only when required values are missing. That upload is parsed as bytes in memory, restricted to the three Azure names, and is not copied to the repository, Drive, logs, or reports. A small structured-output probe validates the configured deployment before YOLO or Blender spends significant time.
 
-The notebook accepts one common-format video, renders from fast `/content` storage, checkpoints completed PNG frames and complete gaps to Google Drive, and saves reports/video under `MyDrive/3D_Reconstruction`. It renders the predicted heaviest gap first, records the measured and projected runtime, rejects a projection above 120 minutes, and shows the representative gap for explicit `APPROVE` confirmation before starting the rest. Re-running resumes the saved representative gap and compatible sparse frames. After completion it creates a small 24 fps judge preview and opens the same presentation dashboard through Colab's authenticated loopback proxy. The dashboard leads with the evidence-grounded finding, three essential metrics, video gap markers, and one selected before/inferred/after visual comparison. Evidence bullets, one key uncertainty, and confidence stay visible; calibration, entity decisions, rejected alternatives, evidence references, and remaining unknowns stay in a collapsed technical audit. The full-quality result remains in Drive and available for download. Push local changes to `main` before starting so the clone uses this code.
+The notebook accepts one common-format video, renders from fast `/content` storage, checkpoints completed PNG frames and complete gaps to Google Drive, and saves reports/video under `MyDrive/3D_Reconstruction`. It renders the predicted heaviest gap first, records the measured and projected runtime, rejects a projection above 120 minutes, and shows the representative gap for explicit `APPROVE` confirmation before starting the rest. Re-running resumes the saved representative gap and compatible sparse frames. After completion it creates a small 24 fps judge preview and opens the same presentation dashboard through Colab's authenticated loopback proxy. The dashboard leads with the full-video finding, separates the observed 75% from the reconstructed 25%, shows the strongest visible clues, explains the four public reconstruction stages, and presents one selected Before / Reconstruction / After gap comparison. Patch method, evidence bullets, one key uncertainty, and confidence stay visible; calibration, entity decisions, rejected alternatives, evidence references, and remaining unknowns stay in a collapsed technical audit. The full-quality result remains in Drive and available for download. Push local changes to `main` before starting so the clone uses this code.
 
 The 320×180 Cycles probe verifies device access only; it is not a production-speed benchmark. A two-minute, 30 fps source hides about 30 seconds under the 25% contract, which means roughly 900 reconstructed source frames. The observed 3–4 hour Colab run reaching the T4 session limit shows that the current 75%-scale, 16-sample, source-FPS Cycles profile is not viable as the default full-video path.
 
@@ -166,7 +167,9 @@ src/application/                    Pipeline and processing-job orchestration
 src/domain/                         Validated evidence, decisions, configuration, job, and upload policies
 src/interfaces/http/                Local HTTP API and static-file boundary
 src/infrastructure/                 Blender, visible-frame, camera-motion, and FFmpeg adapters
-blender/                            JSON-only procedural scene, animation, HUD, and render scripts
+blender/                            JSON-bound scene, rig/NLA animation, HUD, and render scripts
+assets/animation/                   Reusable rigged humanoid and baked motion actions
+scripts/prepare_mixamo_motion_library.py  Offline Mixamo FBX packager; never used during a judge run
 src/*.py                            Existing detection, inference, rendering, and evaluation capabilities
 web/index.html                      Accessible application shell
 web/assets/styles/                  Professional dark/cyan visual system
@@ -184,6 +187,14 @@ The primary settings are in `config/reconstruction_config.json`:
 
 ```json
 {
+  "yolo": {
+    "model": "yolo26m.pt",
+    "pose_enabled": true,
+    "pose_model": "yolo26n-pose.pt",
+    "pose_confidence": 0.3,
+    "pose_boundary_samples": 2,
+    "frame_stride": 8
+  },
   "gap": {
     "missing_fraction": 0.25,
     "min_seconds": 5.0,
@@ -208,7 +219,7 @@ The primary settings are in `config/reconstruction_config.json`:
     "blender_version": "4.5 LTS",
     "default_profile": "standard_forensic",
     "production_scale_percent": 45,
-    "target_fps": 6,
+    "target_fps": 8,
     "cycles_samples": 2,
     "minimum_render_long_edge": 960,
     "maximum_render_long_edge": 1280,
@@ -227,11 +238,29 @@ The UI accepts fractional source rates such as 29.97 and 59.94 fps. The job mana
 
 ## Supported Input Profile and Known Limits
 
-The reliable profile is a decodable constant-frame-rate video of at least four seconds, with even pixel dimensions, a static camera, and visible people or road vehicles near each gap boundary. Inputs are limited to 10 minutes, 120 fps, a 4096-pixel maximum side, and a 3840×2160 total-pixel budget so malformed or extreme compressed media cannot exhaust memory before reconstruction starts. Landscape and portrait resolutions are preserved. Variable-frame-rate input is rejected before inference because this frame-indexed pipeline cannot preserve its internal audio timing honestly. Moving-camera footage is accepted only as **experimental**: camera motion is measured, calibration confidence is capped, and the visible boundary frame is used as a clearly labeled stabilized context instead of inventing buildings or pretending to match an unmodeled moving source camera. Visible person contacts fit the horizon, camera height, ground mapping, and actor screen scale when supported; otherwise the plan reports its fallback prior. The renderer cannot infer an entity visible only inside a hidden gap. Indoor/non-road scenes retain the evidence backplate and never receive unsupported street props.
+The reliable profile is a decodable constant-frame-rate video of at least four seconds, with even pixel dimensions, a static camera, and visible people or road vehicles near each gap boundary. Inputs are limited to 10 minutes, 120 fps, a 4096-pixel maximum side, and a 3840×2160 total-pixel budget so malformed or extreme compressed media cannot exhaust memory before reconstruction starts. Landscape and portrait resolutions are preserved. Variable-frame-rate input is rejected before inference because this frame-indexed pipeline cannot preserve its internal audio timing honestly. Moving-camera footage is accepted only as **experimental**: camera motion is measured, calibration confidence is capped, and a cleaned boundary context is used instead of pretending to match an unmodeled moving source camera. Visible person contacts fit the horizon, camera height, ground mapping, and actor screen scale when supported; otherwise the plan reports its fallback prior. The renderer cannot infer an entity visible only inside a hidden gap. Indoor/non-road scenes retain evidence-derived context and never receive unsupported street props.
 
 This is therefore an evidence-grounded visualization system, not a universal or flawless recovery system. A new judge video still requires input compatibility review and a short representative-gap check before a full render.
 
 YOLO uses sequential BoT-SORT tracking with camera-motion compensation. The scene-intelligence stage performs dependency-free appearance matching across gaps. Tracker configuration lives in `config/botsort_reid.yaml`. Confidence values must be between `0` and `1`; values greater than `1` are interpreted as percentages.
+
+For visible people, `yolo26n-pose.pt` attaches normalized COCO-17 joints to
+two sampled frames at each visible-segment boundary rather than rerunning pose
+inference across the entire visible timeline. The plan uses the closest valid pre-gap and
+post-gap poses to select a motion clip and align its gait phase. Missing or
+low-confidence pose data falls back to the deterministic per-track phase; it
+does not read or estimate joints from hidden frames.
+
+Supported and plausible people use
+`assets/animation/humanoid_motion_library.blend`. Blender appends a fresh
+armature per actor, applies evidence-derived colors, drives the armature with a
+looped NLA action, and moves the parent root along the validated world-space
+path. The checked-in starter library is generated locally and works offline.
+It can be replaced with user-downloaded Mixamo character/clip FBXs through
+`scripts/prepare_mixamo_motion_library.py`; see
+`assets/animation/README.md`. Weak-confidence people still use the simplified
+silhouette, and a missing or invalid motion asset falls back to the existing
+procedural actor with an explicit Blender log message.
 
 For Blender jobs, the pipeline makes bounded cached Azure gap-planning requests plus a presentation-only narrative request after plan-v2 candidates are built and before any hidden truth is materialized. The 2.5D compatibility path remains deterministic. A live paid request was deliberately not made during automated tests; request construction, response parsing, local validation, fallback behavior, and secret isolation are tested without exposing credentials.
 

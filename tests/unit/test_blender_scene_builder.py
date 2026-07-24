@@ -47,6 +47,24 @@ class BlenderSceneBuilderTests(unittest.TestCase):
         }})
 
         environment_builder._build_street_proxies.assert_not_called()
+        environment_builder._grid_line.assert_not_called()
+
+    def test_debug_environment_can_explicitly_enable_ground_grid(self) -> None:
+        environment_builder = _load_environment_builder()
+        environment_builder._grid_line = MagicMock()
+        environment_builder.bpy.ops.mesh.primitive_plane_add = MagicMock()
+        environment_builder.bpy.context.object = SimpleNamespace(
+            name="", data=SimpleNamespace(materials=[]),
+        )
+
+        environment_builder.build_environment({"environment": {
+            "ground_color": [0.0, 0.0, 0.0],
+            "grid_color": [0.0, 0.5, 0.5],
+            "proxy_profile": "neutral",
+            "show_debug_grid": True,
+        }})
+
+        self.assertEqual(34, environment_builder._grid_line.call_count)
 
     def test_workbench_render_uses_material_colors_and_depth_cues(self) -> None:
         scene_builder = _load_scene_builder()
@@ -84,6 +102,12 @@ def _load_scene_builder() -> types.ModuleType:
         "frame_rate": _module_with("frame_rate", blender_frame_rate=lambda fps: (round(fps), 1.0)),
         "hud": _module_with("hud", build_hud=lambda plan, camera: None),
         "human_builder": _module_with("human_builder", build_human=lambda entity: None),
+        "motion_asset": _module_with(
+            "motion_asset",
+            MotionAssetError=RuntimeError,
+            build_rigged_human=lambda *arguments: None,
+            motion_asset_available=lambda: False,
+        ),
         "render_device": _module_with(
             "render_device", CYCLES_RENDER_ENGINE="CYCLES", configure_cycles_render=lambda *arguments: [],
         ),

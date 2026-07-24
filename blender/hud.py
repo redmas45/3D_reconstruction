@@ -17,10 +17,10 @@ def build_hud(plan: dict, camera: bpy.types.Object) -> None:
 
 def _build_minimal_badge(plan: dict, camera: bpy.types.Object) -> None:
     badge = _camera_text(
-        "RECONSTRUCTED · AI-INFERRED",
+        "AI RECONSTRUCTION",
         camera,
         _overlay_location(-3.48, 1.82),
-        0.15 * OVERLAY_SCALE,
+        0.20 * OVERLAY_SCALE,
     )
     badge.data.materials.append(
         create_material("HUD_Badge", (0.72, 0.95, 0.98), alpha=0.90),
@@ -31,14 +31,14 @@ def _build_technical_badge(plan: dict, camera: bpy.types.Object) -> None:
     confidence = float(plan["overall_confidence"])
     calibration = float(plan["camera"]["calibration_confidence"])
     content = (
-        f"RECONSTRUCTED · GAP {int(plan['gap_index']) + 1:02d} · "
-        f"SCENE {confidence:.0%} · CAMERA {calibration:.0%}"
+        f"AI RECONSTRUCTION | GAP {int(plan['gap_index']) + 1:02d} | "
+        f"SCENE {confidence:.0%} | CAMERA {calibration:.0%}"
     )
     badge = _camera_text(
         content,
         camera,
         _overlay_location(-3.48, 1.82),
-        0.135 * OVERLAY_SCALE,
+        0.17 * OVERLAY_SCALE,
     )
     badge.data.materials.append(
         create_material("HUD_Technical_Badge", (0.72, 0.95, 0.98), alpha=0.90),

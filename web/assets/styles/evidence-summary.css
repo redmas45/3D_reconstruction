@@ -1,0 +1,337 @@
+.case-overview {
+  padding: clamp(1rem, 2.5vw, 1.5rem);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background:
+    linear-gradient(135deg, var(--primary-soft), transparent 42%),
+    var(--surface);
+  box-shadow: var(--shadow);
+}
+
+.presentation-section-heading,
+.evidence-section-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.presentation-kicker,
+.card-label {
+  display: block;
+  color: var(--primary);
+  font-size: 0.66rem;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.case-overview h2 {
+  max-width: 24ch;
+  margin: 0.55rem 0 0;
+  font-size: clamp(1.35rem, 3vw, 2rem);
+  line-height: 1.15;
+  letter-spacing: -0.025em;
+}
+
+.case-summary {
+  max-width: 84ch;
+  margin: 0.7rem 0 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+  line-height: 1.65;
+}
+
+.confidence-pill,
+.audit-badge {
+  flex: none;
+  padding: 0.38rem 0.65rem;
+  border: 1px solid color-mix(in srgb, var(--primary) 40%, var(--border));
+  border-radius: 999px;
+  color: var(--primary);
+  background: color-mix(in srgb, var(--primary) 7%, transparent);
+  font-size: 0.68rem;
+  font-weight: 750;
+  white-space: nowrap;
+}
+
+.case-metrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.65rem;
+  margin-top: 1.1rem;
+}
+
+.case-metric {
+  min-width: 0;
+  padding: 0.75rem;
+  border-top: 1px solid var(--border);
+}
+
+.case-metric strong,
+.case-metric small {
+  display: block;
+}
+
+.case-metric strong {
+  color: var(--foreground);
+  font-size: 1.1rem;
+}
+
+.case-metric small {
+  margin-top: 0.2rem;
+  color: var(--subtle);
+  font-size: 0.66rem;
+}
+
+.case-story-points {
+  display: grid;
+  gap: 0.42rem;
+  margin: 0.95rem 0 0;
+  padding-left: 1.2rem;
+  color: var(--muted);
+  font-size: 0.78rem;
+  line-height: 1.5;
+}
+
+.presentation-warning {
+  margin: 0.8rem 0 0;
+  color: var(--warning);
+  font-size: 0.72rem;
+  line-height: 1.5;
+}
+
+.evidence-disclosure {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.75rem;
+  margin-top: 1rem;
+  padding: 0.7rem 0.8rem;
+  border-left: 3px solid var(--warning);
+  background: color-mix(in srgb, var(--warning) 6%, transparent);
+}
+
+.evidence-disclosure strong {
+  color: var(--warning);
+  font-size: 0.7rem;
+}
+
+.evidence-disclosure p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.7rem;
+  line-height: 1.5;
+}
+
+.presentation-details {
+  display: grid;
+  gap: 1rem;
+}
+
+.evidence-narrative {
+  padding: clamp(1rem, 2.5vw, 1.35rem);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--surface);
+}
+
+.evidence-section-heading h3 {
+  margin: 0.3rem 0 0;
+  font-size: 1.15rem;
+}
+
+.presentation-helper {
+  margin: 0.35rem 0 0;
+  color: var(--subtle);
+  font-size: 0.75rem;
+  line-height: 1.5;
+}
+
+.evidence-narrative-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(0, 0.9fr);
+  gap: 0.8rem;
+  margin-top: 1rem;
+}
+
+.narrative-card {
+  min-width: 0;
+  padding: 1rem;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface-soft);
+}
+
+.narrative-card h4,
+.decision-pipeline h4 {
+  margin: 0.35rem 0 0;
+  font-size: 0.92rem;
+}
+
+.narrative-card-summary {
+  margin: 0.55rem 0 0;
+  color: var(--muted);
+  font-size: 0.78rem;
+  line-height: 1.6;
+}
+
+.evidence-facts {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.5rem;
+  margin-top: 0.9rem;
+}
+
+.evidence-fact {
+  min-width: 0;
+  padding-top: 0.6rem;
+  border-top: 1px solid var(--border);
+}
+
+.evidence-fact strong,
+.evidence-fact small {
+  display: block;
+}
+
+.evidence-fact strong {
+  overflow: hidden;
+  color: var(--foreground);
+  font-size: 0.86rem;
+  text-overflow: ellipsis;
+}
+
+.evidence-fact small {
+  margin-top: 0.15rem;
+  color: var(--subtle);
+  font-size: 0.62rem;
+}
+
+.clue-ledger {
+  display: grid;
+  gap: 0;
+  margin: 0.65rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.clue-ledger-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.65rem;
+  padding: 0.55rem 0;
+  border-top: 1px solid var(--border);
+}
+
+.clue-ledger-item small,
+.clue-ledger-item strong {
+  display: block;
+}
+
+.clue-ledger-item small {
+  color: var(--subtle);
+  font-size: 0.58rem;
+  text-transform: uppercase;
+}
+
+.clue-ledger-item strong {
+  margin-top: 0.15rem;
+  color: var(--muted);
+  font-size: 0.7rem;
+  font-weight: 650;
+  line-height: 1.45;
+}
+
+.clue-confidence {
+  align-self: center;
+  color: var(--primary);
+  font-size: 0.68rem;
+  font-weight: 750;
+}
+
+.clue-empty {
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+
+.decision-pipeline {
+  display: grid;
+  grid-template-columns: minmax(190px, 0.38fr) minmax(0, 1fr);
+  gap: 1rem;
+  margin-top: 0.85rem;
+  padding: 1rem;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface-soft);
+}
+
+.decision-steps {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.decision-step {
+  position: relative;
+  min-width: 0;
+  padding: 0 0.75rem;
+  border-left: 1px solid var(--border);
+}
+
+.decision-step-number {
+  display: block;
+  color: var(--primary);
+  font-size: 0.62rem;
+  font-weight: 800;
+}
+
+.decision-step strong {
+  display: block;
+  margin-top: 0.28rem;
+  font-size: 0.76rem;
+}
+
+.decision-step p {
+  margin: 0.28rem 0 0;
+  color: var(--muted);
+  font-size: 0.66rem;
+  line-height: 1.5;
+}
+
+@media (max-width: 900px) {
+  .evidence-narrative-grid,
+  .decision-pipeline {
+    grid-template-columns: 1fr;
+  }
+
+  .decision-steps {
+    border-top: 1px solid var(--border);
+    padding-top: 0.8rem;
+  }
+}
+
+@media (max-width: 680px) {
+  .case-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .evidence-disclosure {
+    grid-template-columns: 1fr;
+    gap: 0.25rem;
+  }
+
+  .evidence-narrative-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .decision-steps {
+    grid-template-columns: 1fr;
+    gap: 0.75rem;
+  }
+
+  .decision-step {
+    padding: 0 0 0 0.75rem;
+  }
+}

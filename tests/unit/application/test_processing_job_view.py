@@ -69,6 +69,28 @@ class ProcessingJobViewTests(unittest.TestCase):
             self.assertEqual(2, presentation["schema_version"])
             self.assertEqual(6.0, presentation["gaps"][0]["duration_seconds"])
 
+    def test_exposes_schema_v3_judge_presentation(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            output_directory = Path(temporary_directory) / "job"
+            manifest_path = (
+                output_directory / "_work" / "video_digest" / "presentation_manifest.json"
+            )
+            manifest_path.parent.mkdir(parents=True)
+            manifest = _presentation_manifest()
+            manifest.update({
+                "schema_version": 3,
+                "evidence_overview": _evidence_overview(),
+                "method": _presentation_method(),
+            })
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+            presentation = build_public_job_record(
+                _job_record(output_directory),
+            )["presentation"]
+
+            self.assertIsNotNone(presentation)
+            self.assertEqual(3, presentation["schema_version"])
+
 
 def _job_record(output_directory: Path) -> ProcessingJob:
     return ProcessingJob(
@@ -195,6 +217,31 @@ def _presentation_manifest() -> dict:
         }],
         "render": {"engine": "CYCLES"},
         "output": {"filename": "result.mp4"},
+    }
+
+
+def _evidence_overview() -> dict:
+    return {
+        "summary": "Visible footage was analyzed.",
+        "observed_seconds": 90.0,
+        "missing_seconds": 30.0,
+        "tracked_entity_count": 1,
+        "people_count": 1,
+        "vehicle_count": 0,
+        "clue_count": 1,
+    }
+
+
+def _presentation_method() -> dict:
+    return {
+        "label": "Public decision trace",
+        "description": "Evidence and validated decisions.",
+        "steps": [{
+            "id": "observe",
+            "title": "Observe",
+            "description": "Analyze visible footage.",
+            "status": "completed",
+        }],
     }
 
 

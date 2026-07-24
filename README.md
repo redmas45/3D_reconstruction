@@ -1,189 +1,219 @@
-# AI-Inferred Evidence Visualization
+# AI-Inferred Evidence Visualization & 3D Forensic Reconstruction
 
-Local pipeline for replacing a distributed 25% of each input video with evidence-grounded, stylized Blender forensic-3D inference views. Azure OpenAI evidence reasoning now sits between deterministic clue extraction and rendering. The former 2.5D compositor remains available as an explicit compatibility fallback.
+A local and cloud pipeline for replacing a distributed 25% of any input video with evidence-grounded, stylized Blender 3D forensic inference views. The system extracts visible clues from the remaining 75% of the video, uses Azure OpenAI (`gpt-5.4-mini`) for structured evidence reasoning, compiles a renderer storyboard, and renders 3D gap reconstructions using headless Blender 4.5 LTS.
 
-## Target Product Contract
+---
 
-For every supported video uploaded through the local UI or selected in the Colab notebook, the pipeline:
+## 📐 System Architecture
 
-1. Randomly selects multiple non-overlapping gaps.
-2. Uses reviewable 5–7 second gaps for videos at least 60 seconds long, with a 1–3 second compact policy for shorter inputs.
-3. Makes the combined hidden duration exactly the configured 25% at frame precision, subject only to integer frame rounding.
-4. Keeps the remaining 75% as visible evidence with live YOLO classifications.
-5. Tracks people, vehicles, bags, and relevant objects through the visible ranges; a lightweight YOLO pose pass records COCO-17 joints for visible people only.
-6. Writes a structured evidence ledger containing visible observations, identities, motion, scene clues, conflicts, and unknowns.
-7. Shows those clues in the UI before reconstruction decisions are rendered.
-8. Optionally asks a configured Azure OpenAI deployment to select and explain bounded reconstruction hypotheses from the ledger and selected visible keyframes.
-9. Validates every AI decision against the evidence contract, then reconstructs each bounded gap.
-10. Stitches the original timeline back together at its original duration.
-11. Evaluates completed reconstructions against hidden ground truth only afterward.
+```mermaid
+flowchart TD
+    A[Input Video] --> B{Source Admission & Preflight}
+    B -->|Pass| C[Gap Selection: Hidden 25% / Visible 75%]
+    C --> D[Visible 75% Analysis]
+    
+    subgraph Visible Evidence Processing
+        D --> D1[YOLO Object Tracking - BoT-SORT]
+        D --> D2[YOLO Pose Estimation - COCO-17 Joints]
+        D --> D3[Identity Registry & Appearance Descriptor]
+        D --> D4[Camera Motion & Height Estimation]
+    end
+    
+    Visible Evidence Processing --> E[Clue Catalog & Entity Hypotheses]
+    E --> F[Azure OpenAI Evidence Reasoner - gpt-5.4-mini]
+    
+    F -->|Validated Decisions| G[Local Decision Validator]
+    F -->|Fallback on Error| G
+    
+    G --> H[Storyboard Compiler]
+    H --> I[Runtime Budget Gate & Representative Benchmark]
+    
+    I -->|Approved| J[Headless Blender 4.5 LTS Cycles Renderer]
+    J --> K[Sparse 8 FPS Layered Rendering]
+    K --> L[FPS & Resolution Normalization]
+    
+    L --> M[FFmpeg Audio-Preserving Video Stitcher]
+    M --> N[Reconstructed 100% Video]
+    
+    N --> O[Ground Truth Evaluator - SSIM / PSNR / Entity Counts]
+```
 
-The generated portions are explicitly labeled **AI-inferred evidence visualization — not ground truth**.
+---
 
-## Evidence Reasoning
+## 🎯 Target Product Contract
 
-The checked-in pipeline uses Azure OpenAI as an evidence-constrained planner, not a video generator and not a replacement for YOLO, geometry validation, Blender, or FFmpeg. If Azure is unconfigured, unavailable, or returns an invalid trace, the job uses a visibly labeled deterministic fallback.
+For every supported video processed via the local Web UI or Google Colab notebook:
 
-The reasoning input contains only visible evidence:
+1. **Gap Allocation**: Randomly selects multiple non-overlapping hidden gaps totaling exactly **25%** of the input video duration at frame precision.
+2. **Review Profiles**: Uses 5–7 second review gaps for videos $\ge$ 60 seconds, and 1–3 second compact gaps for shorter inputs.
+3. **Visible Range Tracking**: The remaining **75%** visible evidence is processed with YOLO object detection (`yolo26m.pt`) and tracking (BoT-SORT) for people, vehicles, and carried objects. Visible people receive COCO-17 joint tracking via `yolo26n-pose.pt`.
+4. **Visible-Only Evidence Contract**: Hidden gap frames are strictly isolated and cryptographically validated. The reasoner and planner have zero access to hidden ground truth during reconstruction planning.
+5. **Evidence Ledger & Clues**: Builds a structured evidence ledger ($v2$) and clue catalog ($v1$) detailing track histories, appearances, velocities, camera motion, and boundary observations.
+6. **Azure OpenAI Reasoning**: Passes structured visible evidence to Azure OpenAI (`gpt-5.4-mini` Structured Outputs) to evaluate candidate hypotheses, select entity paths, and produce an auditable whole-video narrative.
+7. **Fallback Safety**: If Azure OpenAI is unconfigured or returns invalid schemas, a deterministic fallback planner generates validated gap decisions.
+8. **3D Forensic Rendering**: Renders hidden gaps in headless **Blender 4.5 LTS** using Cycles, pinhole camera projection, horizon fitting, rigged humanoid NLA animations, class-aware vehicle silhouettes, and contact shadows.
+9. **Timeline Assembly**: Stitches visible 75% video segments and rendered 3D gaps into a unified video matching original frame count, FPS, and source audio track.
+10. **Post-Evaluation**: Evaluates 3D reconstructions against hidden ground truth only after rendering is complete, computing SSIM, PSNR, and entity tracking accuracy.
 
-- compact track histories and boundary observations from the visible 75%
-- appearance, direction, velocity, lifecycle, and calibration measurements
-- deterministic candidate paths and actions generated by normal Python
-- explicit contradictions and unknowns
-- a bounded manifest of global visible keyframes, visible gap-boundary frames, and visible entity crops
+> ⚠️ **Non-Ground-Truth Disclosure**: Generated gap segments are explicitly watermarked and labeled: **AI-inferred evidence visualization — not ground truth**.
 
-The planner handles at most four gaps and 12 validated low-detail images per request. Images may support semantics, but numeric geometry, counts, identity IDs, paths, and timing remain deterministic Python measurements. Every image frame and hash is validated against the hidden ranges before an API request.
+---
 
-The response follows a strict per-gap/per-entity schema containing selected hypothesis IDs, event beats, evidence and clue references, confidence, concise rationale, rejected alternatives, and unresolved unknowns. A second presentation-only pass writes the whole-video headline, summary, story points, and observed/inferred/observed gap timelines. That prose cannot alter Blender inputs: Python compiles a separate renderer-only storyboard from validated IDs and tokens. Raw private chain-of-thought is neither requested nor stored.
+## 🧠 AI Evidence Reasoning
 
-Azure-assisted reasoning is cached by evidence, clue, hypothesis, visual-manifest, deployment, prompt, schema, and reasoning-effort digests. Invalid gap or narrative responses use an explicitly labeled deterministic fallback—never a silent AI-to-deterministic switch.
+The pipeline uses Azure OpenAI as an **evidence-constrained reasoning planner**, not an unconstrained video generator.
 
-Local Azure reasoning requires `AZURE_OPENAI_API_KEY`, `AZURE_OPENAI_BASE_URL`, and `AZURE_OPENAI_CHAT_DEPLOYMENT`. The configured `gpt-5.4-mini` deployment is passed to the Azure Responses API with `store=false` and a strict JSON schema. A read-only deployment-list check now rejects misspelled or unavailable deployment names with the available resource deployments before the structured-output probe runs. The adapter uses Python's standard HTTPS library, so no extra OpenAI package is required. Secrets are never written into reports, logs, browser responses, notebooks, or Git.
+- **Native HTTPS Adapter**: Built using Python's standard `urllib.request` library — zero external OpenAI SDK dependency required.
+- **Model Deployment**: Configured for `gpt-5.4-mini` via Azure OpenAI Responses API (`store=false`, strict JSON schema).
+- **Inputs**:
+  - Compact track histories, lifecycle events, and boundary observations from visible 75%.
+  - Entity appearance descriptors, velocity profiles, and camera calibration parameters.
+  - Deterministic candidate motion paths and candidate hypothesis library.
+  - Bounded visible keyframes and entity crop image manifests (max 4 gaps, 12 low-detail images per request).
+- **Outputs**:
+  - Structured per-gap decisions selecting validated entity hypotheses, action tokens (`walk`, `run`, `hold`, `exit`, `enter`), and event beats.
+  - Whole-video presentation narrative: headline summary, chronological story points, confidence ratings, rejected alternatives, and unresolved unknowns.
+- **Caching & Validation**: Digest-keyed caching by evidence hash, clue set, prompt, schema version, and deployment name. All outputs are strictly validated by local Python validators before reaching Blender.
 
-API design references: [Azure OpenAI Responses API](https://learn.microsoft.com/en-us/azure/foundry/openai/how-to/responses), [Azure structured outputs](https://learn.microsoft.com/en-us/azure/foundry/openai/how-to/structured-outputs), and [supported reasoning summaries](https://learn.microsoft.com/en-us/azure/foundry/openai/how-to/reasoning).
+---
 
-Active contracts are evidence ledger v2, clue catalog v1, gap hypotheses/decisions v2, narrative v1, storyboard v1, and sparse-frame manifest v1. The public UI payload is Story v2.
+## 🎬 3D Forensic Reconstruction Engine
 
-## Reconstruction Style
+Hidden gaps are rendered using headless **Blender 4.5 LTS**:
 
-The default hidden-gap renderer uses headless Blender 4.5 LTS:
+- **Pinhole Camera & Horizon Fitting**: Establishes a shared pinhole camera model derived from visible person geometry, horizon estimation, and ground plane mapping.
+- **Rigged Humanoid Motion Library**: Supported people use `assets/animation/humanoid_motion_library.blend`. Armatures are driven by looped NLA actions (idle, walk, brisk walk, run) phase-aligned to visible YOLO pose gait cycles.
+- **Vehicle Silhouettes**: Class-aware 3D meshes for cars, trucks, and buses featuring visible wheel spoke rotation and steering alignment.
+- **Temporal Background Compositing**: For static-camera footage, foreground detections are masked out to create a clean background backplate. Boundary frames crossfade through the gap while inferred 3D actors composite cleanly over top.
+- **Adaptive Render Profile**:
+  - **Resolution**: Scaled long-edge target between 960px and 1280px.
+  - **Sample Count**: 2 Cycles path-tracing samples with OptiX / CUDA acceleration.
+  - **Frame Rate**: Renders at sparse 8 FPS reconstruction rate, then normalizes back to exact original video FPS and frame count.
+- **Diagnostic Layers**: Extracts 6 diagnostic review passes at key pose frames: composite, environment backplate, 3D actors, contact shadows, depth map, and uncertainty overlay.
+- **Runtime Budget Gate**: Evaluates gap complexity, predicts total render time, and enforces a hard **120-minute gate** before full rendering begins.
 
-- source-resolution-matched output with a visible-person ground-contact/horizon fit when evidence supports it, otherwise an explicit generic prior
-- evidence-aligned neutral geometry only; automatic building/street proxy generation is disabled because unsupported scene blocks can obscure the source evidence
-- outlined low-poly people and class-aware car/truck/bus silhouettes with explicit contact shadows
-- global per-track body proportions and evidence-derived clothing colors
-- duration-aware three-to-eight-waypoint paths for continuous/exiting tracks; entering tracks are reverse-inferred from their first post-gap evidence and labeled accordingly
-- class-specific maximum speed, acceleration, and turn-rate contracts with ground contact, a reusable rigged-human/NLA motion library, visible-pose gait-phase alignment, visible wheel-spoke rotation, and vehicle steering
-- confidence-based solid, translucent, or simplified silhouette fidelity
-- a small persistent `AI RECONSTRUCTION` badge, uncertainty rings, and explicit non-ground-truth disclosure
-- no black transition shutters or large entering/returning captions in production output
-- a visible-evidence context profile for static footage: foreground detections are excluded from a distributed temporal background estimate, the cleaned before/after boundary frames crossfade through the gap, and only bounded inferred actors are composited over them
-- one pinhole camera model shared by image-to-ground mapping and Blender, robust camera-height estimation from visible person geometry, boundary-box-driven actor scaling, clipped-boundary rejection, path overshoot clipping, and same-lifecycle duplicate suppression
-- a three-entity presentation budget; continuous actors remain solid, entering actors fade in, and exiting actors fade out
-- sparse 8 fps PNG rendering with an adaptive 960–1280-pixel long-edge target and two Cycles samples by default, followed by exact source-FPS and frame-count normalization
-- atomic frame manifests so a rerun skips valid completed PNGs inside an interrupted gap
-- same-render diagnostic environment, actor, uncertainty, HUD, depth, and shadow passes at five review poses
-- a heaviest-gap runtime benchmark and hard 120-minute predicted-runtime gate before remaining gaps begin
+---
 
-The UI defaults to `Blender Forensic 3D`; `Fast 2.5D fallback` must be selected explicitly. Blender failures stop a Blender job and never silently substitute 2.5D output.
-
-## Output
+## 📁 Directory & Output Structure
 
 ```text
-outputs/jobs/<job_id>/<video_name>_reconstructed.mp4
-outputs/jobs/<job_id>/job.json
-outputs/jobs/<job_id>/_work/<video_name>_<source_sha12>/gap_selection.json
-outputs/jobs/<job_id>/_work/<video_name>_<source_sha12>/detections.json
-outputs/jobs/<job_id>/_work/<video_name>_<source_sha12>/detections_manifest.json
-outputs/jobs/<job_id>/_work/<video_name>_<source_sha12>/scene_report.json
-outputs/jobs/<job_id>/_work/<video_name>_<source_sha12>/evidence/evidence_ledger_v2.json
-outputs/jobs/<job_id>/_work/<video_name>_<source_sha12>/evidence/clue_catalog.json
-outputs/jobs/<job_id>/_work/<video_name>_<source_sha12>/evidence/visual_evidence_manifest.json
-outputs/jobs/<job_id>/_work/<video_name>_<source_sha12>/evidence/keyframes/*.jpg
-outputs/jobs/<job_id>/_work/<video_name>_<source_sha12>/evidence/crops/*.jpg
-outputs/jobs/<job_id>/_work/<video_name>_<source_sha12>/reasoning/gap_hypotheses_v2.json
-outputs/jobs/<job_id>/_work/<video_name>_<source_sha12>/reasoning/gap_decisions_v2.json
-outputs/jobs/<job_id>/_work/<video_name>_<source_sha12>/reasoning/reconstruction_narrative.json
-outputs/jobs/<job_id>/_work/<video_name>_<source_sha12>/storyboard/render_storyboard.json
-outputs/jobs/<job_id>/_work/<video_name>_<source_sha12>/storyboard/scene_shell_manifest.json
-outputs/jobs/<job_id>/_work/<video_name>_<source_sha12>/storyboard/render_budget.json
-outputs/jobs/<job_id>/_work/<video_name>_<source_sha12>/storyboard/runtime_estimate.json
-outputs/jobs/<job_id>/_work/<video_name>_<source_sha12>/evidence_ledger.json
-outputs/jobs/<job_id>/_work/<video_name>_<source_sha12>/decision_trace.json
-outputs/jobs/<job_id>/_work/<video_name>_<source_sha12>/reasoning_cache.json
-outputs/jobs/<job_id>/_work/<video_name>_<source_sha12>/reasoning_public.json
-outputs/jobs/<job_id>/_work/<video_name>_<source_sha12>/presentation_manifest.json
-outputs/jobs/<job_id>/_work/<video_name>_<source_sha12>/entity_registry.json
-outputs/jobs/<job_id>/_work/<video_name>_<source_sha12>/camera_motion_report.json
-outputs/jobs/<job_id>/_work/<video_name>_<source_sha12>/reconstruction_plans_v2.json
-outputs/jobs/<job_id>/_work/<video_name>_<source_sha12>/gaps/gap_XX/blender/plan_v2.json
-outputs/jobs/<job_id>/_work/<video_name>_<source_sha12>/gaps/gap_XX/blender/scene.blend
-outputs/jobs/<job_id>/_work/<video_name>_<source_sha12>/gaps/gap_XX/blender/gap_blender.mp4
-outputs/jobs/<job_id>/_work/<video_name>_<source_sha12>/gaps/gap_XX/blender/render_report.json
-outputs/jobs/<job_id>/_work/<video_name>_<source_sha12>/gaps/gap_XX/blender/renders/frames_<plan_sha12>/frame_manifest.json
-outputs/jobs/<job_id>/_work/<video_name>_<source_sha12>/gaps/gap_XX/blender/renders/frames_<plan_sha12>/diagnostic_layers/
-outputs/jobs/<job_id>/_work/<video_name>_<source_sha12>/diagnostic_report.json
+├── app.py                              # Local Web UI server entrypoint
+├── requirements.txt                    # Pinned Python dependencies
+├── config/
+│   ├── reconstruction_config.json      # Master configuration settings
+│   └── botsort_reid.yaml               # BoT-SORT object tracking config
+├── src/
+│   ├── application/                    # Processing job & pipeline orchestrators
+│   │   ├── blender_pipeline.py         # Blender asset prep & process execution
+│   │   ├── evidence_reasoning.py       # Azure OpenAI reasoning orchestrator
+│   │   ├── processing_jobs.py          # Job queue & lifecycle manager
+│   │   └── reconstruction_pipeline.py  # End-to-end pipeline driver
+│   ├── domain/                         # Core domain logic & data models
+│   │   ├── camera_calibration.py       # Horizon fitting & pinhole projection
+│   │   ├── clue_catalog.py             # Structured evidence clue definitions
+│   │   ├── gap_decisions.py            # Entity hypothesis selection & validation
+│   │   ├── identity_registry.py        # Cross-gap entity tracking & descriptors
+│   │   ├── presentation_manifest.py    # Schema-v3 UI presentation DTOs
+│   │   └── render_runtime_budget.py    # 120-minute budget gate & representative gap
+│   ├── infrastructure/                 # Low-level I/O & adapters
+│   │   ├── azure_openai_reasoner.py    # Native HTTPS Azure OpenAI client
+│   │   ├── blender_runner.py           # Subprocess launcher for headless Blender
+│   │   └── media_tools.py              # FFmpeg/FFprobe wrapper
+│   └── interfaces/http/                # REST API & SSE server
+├── blender/                            # In-Blender Python execution scripts
+│   ├── scene_builder.py                # Main Blender scene composition script
+│   ├── human_builder.py                # Rigged human armature & NLA animation setup
+│   ├── vehicle_builder.py              # Silhouette 3D vehicle generation
+│   ├── render_gap.py                   # Cycles frame renderer & PNG manifest writer
+│   └── render_passes.py                # Diagnostic layer extraction
+├── web/                                # Frontend web interface
+│   ├── index.html                      # Primary user dashboard
+│   ├── result.html                     # Judge / Auditor presentation dashboard
+│   └── assets/                         # CSS styling, JS controllers & API client
+├── colab/
+│   └── reconstruction.ipynb            # Google Colab GPU notebook
+├── scripts/                            # Helper scripts (Mixamo library packager)
+└── outputs/jobs/<job_id>/              # Job output directory
+    ├── <video_name>_reconstructed.mp4  # Final stitched reconstruction video
+    ├── job.json                        # Job status & metadata
+    └── _work/<video_name>_<hash>/      # Intermediate artifacts
+        ├── evidence/                   # Evidence ledger v2 & clue catalog v1
+        ├── reasoning/                  # Gap hypotheses v2, decisions v2 & narrative
+        ├── storyboard/                 # Render storyboard & runtime estimate
+        ├── presentation_manifest.json  # Schema-v3 public UI presentation manifest
+        ├── gaps/gap_XX/blender/        # Per-gap .blend files & MP4 renders
+        └── diagnostic_report.json      # Ground truth evaluation metrics
 ```
 
-Hidden ground-truth segment files are not created during preparation. They are materialized only after every inferred gap has rendered, then used for evaluation. They are never passed to detection, tracking, planning, appearance sampling, camera estimation, or Blender.
+---
 
-## Local Interface
+## 🛠️ Quick Start & Installation
 
-Prerequisites are Python 3.12, Blender 4.5 LTS, and the FFmpeg/FFprobe tools available on `PATH` (or installed through WinGet's FFmpeg package location). Python dependencies are pinned in `requirements.txt`.
+### Prerequisites
 
-The 21 July 2026 audit found Blender 4.5.10 locally, but **FFmpeg and FFprobe are not currently discoverable on this workstation**. The pipeline now checks all required tools before detection or rendering and fails immediately with an actionable message; install FFmpeg before starting a real local reconstruction.
+- **Python**: 3.12+
+- **Blender**: 4.5 LTS on `PATH` or configured location
+- **FFmpeg & FFprobe**: Installed and available on system `PATH`
+- **GPU**: NVIDIA GPU with CUDA/OptiX support recommended for Cycles rendering
+
+### Setup Instructions
+
+1. **Clone the repository**:
+   ```bash
+   git clone https://github.com/redmas45/3D_reconstruction.git
+   cd 3D_reconstruction
+   ```
+
+2. **Install Python dependencies**:
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+3. **Configure Environment Variables** (Optional for Azure OpenAI):
+   Create a `.env` file in the project root:
+   ```env
+   AZURE_OPENAI_API_KEY=your_azure_api_key
+   AZURE_OPENAI_BASE_URL=https://your-resource.openai.azure.com/
+   AZURE_OPENAI_CHAT_DEPLOYMENT=gpt-5.4-mini
+   ```
+
+4. **Launch the Local Interface**:
+   ```bash
+   python app.py
+   ```
+   Access the dashboard at `http://127.0.0.1:8000`.
+
+### Useful Server Options
 
 ```bash
-pip install -r requirements.txt
-python app.py
-```
+# Custom host and port
+python app.py --host 127.0.0.1 --port 8080
 
-The interface opens at `http://127.0.0.1:8000` and provides:
-
-- browse and drag-and-drop upload for common video formats
-- a persisted one-at-a-time processing queue
-- expandable live activity with completed, active, and pending stages plus persisted pipeline messages
-- per-frame Blender worker updates aggregated across all active gap renders
-- live progress and elapsed time with an ETA that counts down between updates and reports when it is recalculating
-- responsive cancellation for queued jobs, Python stages, Blender gap workers, and FFmpeg encoding
-- in-browser playback and download for new jobs and existing reconstructed outputs
-- confirmed deletion of the output, work directory, and retained upload
-- persistent dark/light theme toggle in the top-right navigation
-- selectable Blender forensic-3D or explicit 2.5D fallback rendering
-- evidence clues, a whole-video reconstructed story, observed/inferred/observed gap timelines, and per-entity decisions with confidence and unknowns
-- a judge-facing completed-result dashboard with a full-video finding, observed 75% versus reconstructed 25% metrics, player gap markers, strongest visible clues, a concise public decision trace, reviewable Before / Reconstruction / After gap cards, and a collapsed technical audit
-- a single-instance project lock, loopback-only binding, and Host validation so a second app or browser DNS rebinding cannot interfere with active jobs
-
-Useful server options:
-
-```bash
-python app.py --host 127.0.0.1 --port 8000
+# Run in headless mode without automatically opening browser
 python app.py --no-browser
 ```
 
-The UI uses only Python's standard-library HTTP server and vanilla HTML, CSS, and JavaScript. No web framework or extra runtime dependency is required.
+---
 
-## Google Colab
+## ☁️ Google Colab GPU Execution
 
-Open or upload `colab/reconstruction.ipynb` in Google Colab, select a GPU runtime, and run its cells in order. The notebook clones this repository and calls the same `src/`, `blender/`, and `config/` pipeline used by the local interface; it does not maintain a second reconstruction implementation or expose a public tunnel.
+To run the complete pipeline on cloud GPUs:
 
-The notebook installs Blender 4.5 LTS and FFmpeg, verifies PyTorch CUDA for YOLO, and separately tests Blender Cycles with a real OptiX/CUDA render. A successful probe selects Cycles GPU rendering with two samples, denoising, 6 reconstruction fps, adaptive sharp resolution, at most six detailed entities, one Blender worker, and a 15-minute no-frame timeout. YOLO and Blender use the same T4 sequentially; concurrent Cycles processes are intentionally avoided because they contend for one GPU. If neither OptiX nor CUDA completes the probe, the notebook falls back to Workbench software rendering with two workers.
+1. Open `colab/reconstruction.ipynb` in Google Colab.
+2. Select a GPU runtime (T4 or better).
+3. Execute notebook cells in order. The notebook:
+   - Automatically installs **Blender 4.5 LTS** and **FFmpeg**.
+   - Verifies PyTorch CUDA and executes a fast Cycles GPU probe (OptiX/CUDA).
+   - Reads Azure secrets securely without saving credentials to disk or Drive.
+   - Saves completed gap checkpoints to Google Drive (`MyDrive/3D_Reconstruction`).
+   - Benchmarks the heaviest representative gap and waits for visual approval.
+   - Serves the judge presentation view (`result.html`) via Colab's authenticated loopback proxy.
 
-Azure values can come from Colab Secrets or from a separately uploaded local `.env`. Colab cannot read a file that remains on the laptop, so the notebook opens an upload picker only when required values are missing. That upload is parsed as bytes in memory, restricted to the three Azure names, and is not copied to the repository, Drive, logs, or reports. A small structured-output probe validates the configured deployment before YOLO or Blender spends significant time.
+---
 
-The notebook accepts one common-format video, renders from fast `/content` storage, checkpoints completed PNG frames and complete gaps to Google Drive, and saves reports/video under `MyDrive/3D_Reconstruction`. It renders the predicted heaviest gap first, records the measured and projected runtime, rejects a projection above 120 minutes, and shows the representative gap for explicit `APPROVE` confirmation before starting the rest. Re-running resumes the saved representative gap and compatible sparse frames. After completion it creates a small 24 fps judge preview and opens the same presentation dashboard through Colab's authenticated loopback proxy. The dashboard leads with the full-video finding, separates the observed 75% from the reconstructed 25%, shows the strongest visible clues, explains the four public reconstruction stages, and presents one selected Before / Reconstruction / After gap comparison. Patch method, evidence bullets, one key uncertainty, and confidence stay visible; calibration, entity decisions, rejected alternatives, evidence references, and remaining unknowns stay in a collapsed technical audit. The full-quality result remains in Drive and available for download. Push local changes to `main` before starting so the clone uses this code.
+## ⚙️ Configuration Reference
 
-The 320×180 Cycles probe verifies device access only; it is not a production-speed benchmark. A two-minute, 30 fps source hides about 30 seconds under the 25% contract, which means roughly 900 reconstructed source frames. The observed 3–4 hour Colab run reaching the T4 session limit shows that the current 75%-scale, 16-sample, source-FPS Cycles profile is not viable as the default full-video path.
-
-The smart production gate is implemented: adaptive 960–1280 long-edge resolution, two samples, 6 reconstruction fps, one T4 Blender worker, atomic PNG manifests, interrupted-frame reuse, exact source-timing normalization, Drive checkpoints, representative-gap timing and approval, and six diagnostic review layers extracted from the same render at bounded pose frames. A full judge-video run and human visual approval are still required evidence that this profile is fast and coherent on the assigned Colab hardware.
-
-Azure OpenAI improves the quality and auditability of reconstruction decisions; it does not make Blender rendering faster.
-
-## Project Structure
-
-```text
-app.py                              Local UI entrypoint
-src/application/                    Pipeline and processing-job orchestration
-src/domain/                         Validated evidence, decisions, configuration, job, and upload policies
-src/interfaces/http/                Local HTTP API and static-file boundary
-src/infrastructure/                 Blender, visible-frame, camera-motion, and FFmpeg adapters
-blender/                            JSON-bound scene, rig/NLA animation, HUD, and render scripts
-assets/animation/                   Reusable rigged humanoid and baked motion actions
-scripts/prepare_mixamo_motion_library.py  Offline Mixamo FBX packager; never used during a judge run
-src/*.py                            Existing detection, inference, rendering, and evaluation capabilities
-web/index.html                      Accessible application shell
-web/assets/styles/                  Professional dark/cyan visual system
-web/assets/scripts/                 Typed API client, formatters, and UI controller
-colab/reconstruction.ipynb          Single-file Colab GPU batch interface
-tests/unit/                         Layered domain, application, and interface tests
-tests/test_*.py                     Existing reconstruction behavior tests
-```
-
-New modules follow the engineering standards in `rules.md`: explicit types, validated boundaries, named policy constants, and focused functions.
-
-## Configuration
-
-The primary settings are in `config/reconstruction_config.json`:
+Main configuration parameters in `config/reconstruction_config.json`:
 
 ```json
 {
@@ -192,7 +222,6 @@ The primary settings are in `config/reconstruction_config.json`:
     "pose_enabled": true,
     "pose_model": "yolo26n-pose.pt",
     "pose_confidence": 0.3,
-    "pose_boundary_samples": 2,
     "frame_stride": 8
   },
   "gap": {
@@ -201,14 +230,11 @@ The primary settings are in `config/reconstruction_config.json`:
     "max_seconds": 7.0,
     "compact_min_seconds": 1.0,
     "compact_max_seconds": 3.0,
-    "review_profile_min_video_seconds": 60.0,
-    "context_seconds": 2.0
+    "review_profile_min_video_seconds": 60.0
   },
   "reasoning": {
     "enabled": true,
     "planner_schema_version": 2,
-    "request_timeout_seconds": 120,
-    "max_output_tokens": 8000,
     "reasoning_effort": "medium",
     "maximum_gaps_per_batch": 4,
     "maximum_images_per_batch": 12,
@@ -217,67 +243,36 @@ The primary settings are in `config/reconstruction_config.json`:
   "renderer": {
     "default_mode": "blender",
     "blender_version": "4.5 LTS",
-    "default_profile": "standard_forensic",
     "production_scale_percent": 45,
     "target_fps": 8,
     "cycles_samples": 2,
     "minimum_render_long_edge": 960,
     "maximum_render_long_edge": 1280,
     "hybrid_static_backplate": true,
-    "production_hud_mode": "minimal",
-    "maximum_gpu_workers": 1,
-    "runtime_budget_enabled": true,
-    "maximum_predicted_render_seconds": 7200,
-    "max_parallel_gap_renders": 3,
-    "gap_render_stall_timeout_seconds": 7200
+    "maximum_predicted_render_seconds": 7200
   }
 }
 ```
 
-The UI accepts fractional source rates such as 29.97 and 59.94 fps. The job manager keeps one full video reconstruction active at a time. Local Eevee/Workbench jobs may use up to three independent gap workers. Cycles is automatically capped by `maximum_gpu_workers` (one for a single T4); CPU normalization and checkpoint work can overlap without launching competing Cycles processes. The Blender timeout is inactivity-based: every completed sparse frame resets it. Source frames remain streamed instead of being held as an uncompressed full-video RAM cache.
+---
 
-## Supported Input Profile and Known Limits
+## 🧪 Testing & Verification
 
-The reliable profile is a decodable constant-frame-rate video of at least four seconds, with even pixel dimensions, a static camera, and visible people or road vehicles near each gap boundary. Inputs are limited to 10 minutes, 120 fps, a 4096-pixel maximum side, and a 3840×2160 total-pixel budget so malformed or extreme compressed media cannot exhaust memory before reconstruction starts. Landscape and portrait resolutions are preserved. Variable-frame-rate input is rejected before inference because this frame-indexed pipeline cannot preserve its internal audio timing honestly. Moving-camera footage is accepted only as **experimental**: camera motion is measured, calibration confidence is capped, and a cleaned boundary context is used instead of pretending to match an unmodeled moving source camera. Visible person contacts fit the horizon, camera height, ground mapping, and actor screen scale when supported; otherwise the plan reports its fallback prior. The renderer cannot infer an entity visible only inside a hidden gap. Indoor/non-road scenes retain evidence-derived context and never receive unsupported street props.
-
-This is therefore an evidence-grounded visualization system, not a universal or flawless recovery system. A new judge video still requires input compatibility review and a short representative-gap check before a full render.
-
-YOLO uses sequential BoT-SORT tracking with camera-motion compensation. The scene-intelligence stage performs dependency-free appearance matching across gaps. Tracker configuration lives in `config/botsort_reid.yaml`. Confidence values must be between `0` and `1`; values greater than `1` are interpreted as percentages.
-
-For visible people, `yolo26n-pose.pt` attaches normalized COCO-17 joints to
-two sampled frames at each visible-segment boundary rather than rerunning pose
-inference across the entire visible timeline. The plan uses the closest valid pre-gap and
-post-gap poses to select a motion clip and align its gait phase. Missing or
-low-confidence pose data falls back to the deterministic per-track phase; it
-does not read or estimate joints from hidden frames.
-
-Supported and plausible people use
-`assets/animation/humanoid_motion_library.blend`. Blender appends a fresh
-armature per actor, applies evidence-derived colors, drives the armature with a
-looped NLA action, and moves the parent root along the validated world-space
-path. The checked-in starter library is generated locally and works offline.
-It can be replaced with user-downloaded Mixamo character/clip FBXs through
-`scripts/prepare_mixamo_motion_library.py`; see
-`assets/animation/README.md`. Weak-confidence people still use the simplified
-silhouette, and a missing or invalid motion asset falls back to the existing
-procedural actor with an explicit Blender log message.
-
-For Blender jobs, the pipeline makes bounded cached Azure gap-planning requests plus a presentation-only narrative request after plan-v2 candidates are built and before any hidden truth is materialized. The 2.5D compatibility path remains deterministic. A live paid request was deliberately not made during automated tests; request construction, response parsing, local validation, fallback behavior, and secret isolation are tested without exposing credentials.
-
-## Evaluation
-
-Only after every missing gap has been rendered, the evaluator reads hidden ground truth and reports diagnostic similarity metrics:
-
-- SSIM and PSNR
-- entry and exit boundary similarity
-- object-count consistency
-- person-count consistency
-- normalized object-center error
-
-These values compare stylized 3D inference with photographic footage; they are diagnostics, not an accuracy percentage or proof that the hidden event was recovered.
-
-Run the unit tests with:
+Run the full unit test suite covering domain contracts, reasoning schemas, camera projection, asset pipelines, and interface servers:
 
 ```bash
-python -m pytest -q
+python -m pytest
 ```
+
+---
+
+## 📊 Post-Render Ground Truth Evaluation
+
+After all hidden 3D gaps have rendered, the evaluator compares the reconstructed segments against hidden ground-truth video:
+
+- **SSIM & PSNR**: Structural similarity and peak signal-to-noise ratio against photographic frames.
+- **Boundary Continuity**: Image similarity at gap entry ($t_{\text{start}}$) and exit ($t_{\text{end}}$).
+- **Entity Consistency**: Object and person count fidelity.
+- **Center Tracking Error**: Normalized 2D spatial error of object centroids.
+
+> *Note: Evaluation metrics serve as internal technical diagnostics comparing stylized 3D graphics against real-world video, not as a claim of exact visual recovery.*

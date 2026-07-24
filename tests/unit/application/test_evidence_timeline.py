@@ -228,7 +228,7 @@ class EvidenceTimelineTests(unittest.TestCase):
 
         self.assertTrue(sibling_stopped.is_set())
 
-    def test_runtime_budget_stops_after_representative_gap(self) -> None:
+    def test_runtime_advisory_warns_and_continues_after_representative_gap(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             work_directory = Path(temporary_directory)
             plan_paths = []
@@ -272,10 +272,17 @@ class EvidenceTimelineTests(unittest.TestCase):
                     return_value=120.0,
                 ),
             ):
-                with self.assertRaisesRegex(RuntimeError, "runtime budget"):
-                    _render_blender_gaps(context, None)
+                rendered_paths = _render_blender_gaps(context, None)
 
-        render_mock.assert_called_once()
+            estimate = json.loads(
+                (work_directory / "storyboard" / "runtime_estimate.json").read_text(
+                    encoding="utf-8",
+                ),
+            )
+
+        self.assertEqual({0, 1}, set(rendered_paths))
+        self.assertEqual("warning", estimate["status"])
+        self.assertEqual(2, render_mock.call_count)
 
     def test_keyboard_interrupt_stops_running_gap_workers(self) -> None:
         sibling_started = threading.Event()

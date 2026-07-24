@@ -25,6 +25,17 @@ class EvidenceReasoningApplicationTests(unittest.TestCase):
             "evidence_digest": "evidence",
             "clue_digest": "clues",
             "hypothesis_digest": "hypotheses",
+            "clues": [{"id": "clue_1"}],
+            "hypothesis_gaps": [{
+                "gap_index": 0,
+                "entities": [{
+                    "entity_id": "person_1",
+                    "hypotheses": [{
+                        "id": "gap_00_person_1_hold_position",
+                        "type": "hold_position",
+                    }],
+                }],
+            }],
         }
 
         decision_schema = _decision_batch_schema(payload)
@@ -38,6 +49,21 @@ class EvidenceReasoningApplicationTests(unittest.TestCase):
         )
         self.assertEqual(
             ["hypotheses"], decision_schema["properties"]["hypothesis_digest"]["enum"],
+        )
+        gap_schema = decision_schema["properties"]["decisions"]["items"]
+        entity_schema = gap_schema["properties"]["entities"]["items"]
+        self.assertEqual([0], gap_schema["properties"]["gap_index"]["enum"])
+        self.assertEqual(
+            ["person_1"], entity_schema["properties"]["entity_id"]["enum"],
+        )
+        self.assertEqual(
+            ["gap_00_person_1_hold_position"],
+            entity_schema["properties"]["selected_hypothesis_id"]["enum"],
+        )
+        rejection_schema = entity_schema["properties"]["rejected_hypotheses"]["items"]
+        self.assertEqual(
+            ["gap_00_person_1_hold_position"],
+            rejection_schema["properties"]["id"]["enum"],
         )
         self.assertEqual(
             ["clues"], narrative_schema["properties"]["clue_digest"]["enum"],

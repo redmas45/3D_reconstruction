@@ -10,10 +10,6 @@ DETAILED_ENTITY_WEIGHT = 0.10
 WEAK_ENTITY_WEIGHT = 0.03
 
 
-class RenderRuntimeBudgetExceeded(RuntimeError):
-    pass
-
-
 class RepresentativePreviewApprovalRequired(RuntimeError):
     def __init__(self, preview_path: Path, approval_path: Path, signature: str) -> None:
         super().__init__(
@@ -69,24 +65,6 @@ def predicted_total_seconds(
         * sum(item.weight for item in costs)
         / representative.weight,
         3,
-    )
-
-
-def enforce_runtime_budget(
-    predicted_seconds: float,
-    maximum_seconds: int,
-    allow_override: bool,
-) -> None:
-    if predicted_seconds <= maximum_seconds or allow_override:
-        return
-    predicted_minutes = predicted_seconds / 60.0
-    maximum_minutes = maximum_seconds / 60.0
-    raise RenderRuntimeBudgetExceeded(
-        "Predicted Blender render time "
-        f"({predicted_minutes:.1f} minutes) exceeds the configured "
-        f"{maximum_minutes:.1f}-minute runtime budget. "
-        "The representative gap was saved; lower FPS, scale, samples, or entity count "
-        "and resume, or explicitly enable the runtime-budget override."
     )
 
 

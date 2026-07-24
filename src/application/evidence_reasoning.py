@@ -21,6 +21,7 @@ from domain.gap_decisions import (
     gap_decisions_json_schema,
     validate_gap_decisions,
 )
+from domain.gap_decision_normalization import normalize_gap_decision_references
 from domain.gap_hypotheses import build_gap_hypotheses
 from domain.reconstruction_narrative import (
     NarrativeValidationError,
@@ -43,7 +44,7 @@ from infrastructure.json_files import read_json_file, write_json_file
 
 LOGGER = logging.getLogger(__name__)
 REASONING_CACHE_SCHEMA_VERSION = 2
-REASONING_PROMPT_VERSION = "visible-story-planner-v2"
+REASONING_PROMPT_VERSION = "visible-story-planner-v3"
 PUBLIC_REASONING_FILENAME = "reasoning_public.json"
 DEFAULT_MAXIMUM_GAPS_PER_BATCH = 4
 DEFAULT_MAXIMUM_IMAGES_PER_BATCH = 12
@@ -135,6 +136,9 @@ def _select_decisions(
         decisions, metadata = _request_decision_batches(
             settings, artifacts, configuration, cancellation_check,
         )
+        decisions, normalization_report = normalize_gap_decision_references(
+            decisions, artifacts["hypotheses"],
+        )
         validated = validate_gap_decisions(
             decisions, artifacts["ledger"]["evidence_digest"],
             artifacts["clues"], artifacts["hypotheses"],
@@ -142,10 +146,24 @@ def _select_decisions(
     except (AzureReasoningRequestError, AzureReasoningResponseError, GapDecisionValidationError):
         LOGGER.exception("Azure gap planning failed for %s", artifacts["ledger"]["evidence_digest"])
         return _fallback_decisions(artifacts, "Azure gap planning was unavailable or invalid.")
+    metadata = {**metadata, "normalization": normalization_report}
+    _log_normalization(normalization_report, artifacts["ledger"]["evidence_digest"])
     cache_metadata = {**metadata, "signature": signature}
     cache = {"schema_version": REASONING_CACHE_SCHEMA_VERSION, "decisions": validated, "metadata": cache_metadata}
     write_json_file(work_directory / "reasoning" / "reasoning_cache.json", cache)
     return "azure", validated, cache_metadata
+
+
+def _log_normalization(report: dict[str, int], evidence_digest: str) -> None:
+    repair_count = sum(report.values())
+    if repair_count == 0:
+        return
+    LOGGER.warning(
+        "Normalized %d non-executable Azure hypothesis references for %s: %s",
+        repair_count,
+        evidence_digest,
+        report,
+    )
 
 
 def _request_decision_batches(
@@ -438,7 +456,60 @@ def _decision_batch_schema(payload: dict) -> dict:
             "type": "string",
             "enum": [str(payload[field])],
         }
+    _pin_decision_identifiers(schema, payload)
     return schema
+
+
+def _pin_decision_identifiers(schema: dict, payload: dict) -> None:
+    gap_schema = schema["properties"]["decisions"]["items"]
+    entity_schema = gap_schema["properties"]["entities"]["items"]
+    rejection_schema = entity_schema["properties"]["rejected_hypotheses"]["items"]
+    beat_schema = gap_schema["properties"]["event_beats"]["items"]
+    gap_indexes, entity_ids, hypothesis_ids, clue_ids = _decision_identifiers(payload)
+    gap_schema["properties"]["gap_index"] = _with_enum(
+        gap_schema["properties"]["gap_index"], gap_indexes,
+    )
+    entity_schema["properties"]["entity_id"] = _with_enum(
+        entity_schema["properties"]["entity_id"], entity_ids,
+    )
+    entity_schema["properties"]["selected_hypothesis_id"] = _with_enum(
+        entity_schema["properties"]["selected_hypothesis_id"], hypothesis_ids,
+    )
+    rejection_schema["properties"]["id"] = _with_enum(
+        rejection_schema["properties"]["id"], hypothesis_ids,
+    )
+    beat_schema["properties"]["entity_ids"]["items"] = _with_enum(
+        beat_schema["properties"]["entity_ids"]["items"], entity_ids,
+    )
+    gap_schema["properties"]["clue_ids"]["items"] = _with_enum(
+        gap_schema["properties"]["clue_ids"]["items"], clue_ids,
+    )
+
+
+def _decision_identifiers(payload: dict) -> tuple[list[int], list[str], list[str], list[str]]:
+    gaps = payload.get("hypothesis_gaps", [])
+    entities = [
+        entity for gap in gaps if isinstance(gap, dict)
+        for entity in gap.get("entities", []) if isinstance(entity, dict)
+    ]
+    return (
+        [int(gap["gap_index"]) for gap in gaps if isinstance(gap, dict)],
+        [str(entity["entity_id"]) for entity in entities],
+        [
+            str(hypothesis["id"]) for entity in entities
+            for hypothesis in entity.get("hypotheses", [])
+            if isinstance(hypothesis, dict) and isinstance(hypothesis.get("id"), str)
+        ],
+        [
+            str(clue["id"]) for clue in payload.get("clues", [])
+            if isinstance(clue, dict) and isinstance(clue.get("id"), str)
+        ],
+    )
+
+
+def _with_enum(schema: dict, values: list[object]) -> dict:
+    unique_values = list(dict.fromkeys(values))
+    return {**schema, "enum": unique_values} if unique_values else dict(schema)
 
 
 def _narrative_schema(clues: dict, mode: str) -> dict:

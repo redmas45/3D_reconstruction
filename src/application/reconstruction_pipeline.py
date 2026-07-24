@@ -37,7 +37,6 @@ from domain.presentation_manifest import (
 )
 from domain.render_runtime_budget import (
     RepresentativePreviewApprovalRequired,
-    enforce_runtime_budget,
     gap_render_costs,
     preview_is_approved,
     predicted_total_seconds,
@@ -532,9 +531,10 @@ def _render_blender_gaps_with_budget(
     renderer = context.configuration["renderer"]
     maximum_seconds = int(renderer["maximum_predicted_render_seconds"])
     override_enabled = bool(renderer.get("allow_runtime_budget_override", False))
+    advisory_exceeded = predicted_seconds > maximum_seconds and not override_enabled
     estimate = {
         "schema_version": 1,
-        "status": "accepted" if predicted_seconds <= maximum_seconds or override_enabled else "rejected",
+        "status": "warning" if advisory_exceeded else "accepted",
         "representative_gap_index": representative_index,
         "representative_elapsed_seconds": round(elapsed_seconds, 3),
         "predicted_total_seconds": predicted_seconds,
@@ -556,7 +556,6 @@ def _render_blender_gaps_with_budget(
         estimate,
     )
     if len(costs) > 1:
-        enforce_runtime_budget(predicted_seconds, maximum_seconds, override_enabled)
         _require_representative_preview_approval(
             context, representative_index, representative_path,
         )
@@ -564,7 +563,7 @@ def _render_blender_gaps_with_budget(
         progress_callback,
         "rendering",
         RENDERING_START + 0.01,
-        f"Projected Blender runtime: {predicted_seconds / 60.0:.1f} minutes; budget accepted",
+        _runtime_projection_message(predicted_seconds, maximum_seconds, advisory_exceeded),
     )
     remaining_indexes = [
         item.gap_index for item in costs
@@ -580,6 +579,20 @@ def _render_blender_gaps_with_budget(
         completed_indexes={representative_index},
     ))
     return rendered_paths
+
+
+def _runtime_projection_message(
+    predicted_seconds: float,
+    maximum_seconds: int,
+    advisory_exceeded: bool,
+) -> str:
+    predicted_minutes = predicted_seconds / 60.0
+    if not advisory_exceeded:
+        return f"Projected Blender runtime: {predicted_minutes:.1f} minutes"
+    return (
+        f"Projected Blender runtime: {predicted_minutes:.1f} minutes, above the "
+        f"{maximum_seconds / 60.0:.1f}-minute advisory; continuing after approval"
+    )
 
 
 def _require_representative_preview_approval(

@@ -8,9 +8,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
 from domain.render_runtime_budget import (
-    RenderRuntimeBudgetExceeded,
     approve_representative_preview,
-    enforce_runtime_budget,
     gap_render_costs,
     predicted_total_seconds,
     preview_is_approved,
@@ -37,12 +35,6 @@ class RenderRuntimeBudgetTests(unittest.TestCase):
         predicted = predicted_total_seconds(costs, 1, 20.0)
 
         self.assertEqual(30.0, predicted)
-
-    def test_budget_stops_expensive_run_unless_overridden(self) -> None:
-        with self.assertRaisesRegex(RenderRuntimeBudgetExceeded, "representative gap was saved"):
-            enforce_runtime_budget(3_601.0, 3_600, allow_override=False)
-
-        enforce_runtime_budget(3_601.0, 3_600, allow_override=True)
 
     def test_preview_approval_is_bound_to_the_plan_signature(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:

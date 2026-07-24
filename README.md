@@ -206,7 +206,7 @@ To run the complete pipeline on cloud GPUs:
    - Verifies PyTorch CUDA and executes a fast Cycles GPU probe (OptiX/CUDA).
    - Reads Azure secrets securely without saving credentials to disk or Drive.
    - Saves completed gap checkpoints to Google Drive (`MyDrive/3D_Reconstruction`).
-   - Benchmarks the heaviest representative gap and waits for visual approval.
+   - Benchmarks the heaviest representative gap and waits for visual approval; long runtime projections are warnings and do not stop an approved render.
    - Serves the judge presentation view (`result.html`) via Colab's authenticated loopback proxy.
 
 ---

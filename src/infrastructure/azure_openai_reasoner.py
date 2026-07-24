@@ -24,6 +24,7 @@ SUPPORTED_REASONING_EFFORTS = frozenset({"none", "low", "medium", "high", "xhigh
 SYSTEM_INSTRUCTIONS = """You are a constrained forensic reconstruction planner.
 Use only the supplied visible-frame evidence ledger, clue catalog, bounded images, and hypothesis library.
 Select exactly one supplied hypothesis for every supplied entity in every supplied gap.
+Use each hypothesis's full supplied id in selected and rejected fields; never substitute its type name.
 Never invent evidence, coordinates, identities, events, or hidden-frame observations.
 Prefer the measured continuation when evidence supports it; choose conservative motion when boundary
 evidence conflicts. Image inputs may support semantic interpretation but never override supplied numeric

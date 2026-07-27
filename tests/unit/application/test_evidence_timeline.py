@@ -41,7 +41,7 @@ class EvidenceTimelineTests(unittest.TestCase):
             "max_seconds": 3.0,
             "context_seconds": 2.0,
         }
-        selection = _new_selection(info, gap_config, random.Random(4))
+        selection = _new_selection(info, gap_config, random.Random(4), None)
 
         self.assertTrue(_selection_cache_is_compatible(selection, info, gap_config))
         self.assertFalse(_selection_cache_is_compatible(
@@ -54,6 +54,23 @@ class EvidenceTimelineTests(unittest.TestCase):
             selection, {**info, "sha256": "second"}, gap_config,
         ))
 
+    def test_gap_cache_is_invalidated_when_the_shot_structure_changes(self) -> None:
+        """Gaps are placed inside shots, so a re-analysis that finds different cuts
+        invalidates the placement even though the video and settings are identical."""
+        info = {"width": 640, "height": 480, "fps": 30.0, "frames": 600, "sha256": "first"}
+        gap_config = {"missing_fraction": 0.25, "min_seconds": 1.0, "max_seconds": 3.0}
+        shots = [(0, 299), (320, 599)]
+        selection = _new_selection(info, gap_config, random.Random(4), shots)
+
+        self.assertTrue(_selection_cache_is_compatible(selection, info, gap_config, shots))
+        self.assertFalse(_selection_cache_is_compatible(
+            selection, info, gap_config, [(0, 249), (270, 599)],
+        ))
+        self.assertFalse(
+            _selection_cache_is_compatible(selection, info, gap_config, None),
+            "a selection placed inside shots must not be reused as an unsegmented one",
+        )
+
     def test_corrupt_selection_cache_is_recomputed_atomically(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             work_directory = Path(temporary_directory)
@@ -63,7 +80,7 @@ class EvidenceTimelineTests(unittest.TestCase):
             configuration = {"gap": {"missing_fraction": 0.25, "min_seconds": 1.0, "max_seconds": 3.0}}
 
             selection = _load_selection(
-                work_directory, info, configuration, random.Random(4), reuse_work=True,
+                work_directory, info, configuration, random.Random(4), True, None,
             )
 
             self.assertTrue(_selection_cache_is_compatible(selection, info, configuration["gap"]))
@@ -73,7 +90,7 @@ class EvidenceTimelineTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary_directory:
             work_directory = Path(temporary_directory)
             info = {"width": 640, "height": 480, "fps": 30.0, "frames": 600, "sha256": "source"}
-            selection = _new_selection(info, {}, random.Random(4))
+            selection = _new_selection(info, {}, random.Random(4), None)
             configuration = {"yolo": {"frame_stride": 8, "downscale_width": 640}}
             with patch("application.reconstruction_pipeline.detect_scene_objects", return_value=[]):
                 _load_detections(
@@ -118,15 +135,9 @@ class EvidenceTimelineTests(unittest.TestCase):
     def test_runtime_dependencies_are_checked_before_expensive_processing(self) -> None:
         with patch("application.reconstruction_pipeline.find_media_tool") as media_tool:
             with patch("application.reconstruction_pipeline.find_blender_executable") as blender_tool:
-                _validate_runtime_dependencies("blender")
+                _validate_runtime_dependencies()
                 self.assertEqual([call("ffmpeg"), call("ffprobe")], media_tool.call_args_list)
                 blender_tool.assert_called_once_with()
-
-        with patch("application.reconstruction_pipeline.find_media_tool") as media_tool:
-            with patch("application.reconstruction_pipeline.find_blender_executable") as blender_tool:
-                _validate_runtime_dependencies("2d")
-                self.assertEqual([call("ffmpeg"), call("ffprobe")], media_tool.call_args_list)
-                blender_tool.assert_not_called()
 
     def test_scaled_render_dimensions_are_even_and_never_smaller_than_two(self) -> None:
         configuration = {"renderer": {"production_scale_percent": 99}}
@@ -162,8 +173,7 @@ class EvidenceTimelineTests(unittest.TestCase):
         start_barrier = threading.Barrier(2)
         context = TimelineRenderContext(
             video_path=Path("source.mp4"),
-            renderer_mode="blender",
-            configuration={"renderer": {"max_parallel_gap_renders": 2}},
+            configuration={"renderer": {"max_parallel_gap_renders": 2, "render_mode": "full_scene"}},
             prepared=SimpleNamespace(gap_selection={"hidden_ranges": [[0, 1], [2, 3]]}),
             reuse_work=False,
             blender_rendered_paths={},
@@ -196,8 +206,7 @@ class EvidenceTimelineTests(unittest.TestCase):
         sibling_stopped = threading.Event()
         context = TimelineRenderContext(
             video_path=Path("source.mp4"),
-            renderer_mode="blender",
-            configuration={"renderer": {"max_parallel_gap_renders": 2}},
+            configuration={"renderer": {"max_parallel_gap_renders": 2, "render_mode": "full_scene"}},
             prepared=SimpleNamespace(gap_selection={"hidden_ranges": [[0, 1], [2, 3]]}),
             reuse_work=False,
             blender_rendered_paths={},
@@ -244,8 +253,7 @@ class EvidenceTimelineTests(unittest.TestCase):
                 plan_paths.append(plan_path)
             context = TimelineRenderContext(
                 video_path=Path("source.mp4"),
-                renderer_mode="blender",
-                configuration={"renderer": {
+                    configuration={"renderer": {
                     "max_parallel_gap_renders": 2,
                     "runtime_budget_enabled": True,
                     "maximum_predicted_render_seconds": 60,
@@ -289,8 +297,7 @@ class EvidenceTimelineTests(unittest.TestCase):
         sibling_stopped = threading.Event()
         context = TimelineRenderContext(
             video_path=Path("source.mp4"),
-            renderer_mode="blender",
-            configuration={"renderer": {"max_parallel_gap_renders": 2}},
+            configuration={"renderer": {"max_parallel_gap_renders": 2, "render_mode": "full_scene"}},
             prepared=SimpleNamespace(gap_selection={"hidden_ranges": [[0, 1], [2, 3]]}),
             reuse_work=False,
             blender_rendered_paths={},

@@ -48,7 +48,6 @@ def build_public_job_record(record: ProcessingJob) -> dict[str, object]:
         "download_url": f"/api/outputs/{record.job_id}?download=1" if output_exists else None,
         "size_bytes": output_size_bytes,
         "is_legacy_output": record.is_legacy_output,
-        "renderer_mode": record.renderer_mode,
         "reasoning": _reasoning_snapshot(record.output_dir),
         "presentation": _presentation_snapshot(record.output_dir),
     }

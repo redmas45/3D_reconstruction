@@ -25,7 +25,6 @@ from domain.processing_job import (
     ProcessingStage,
     utc_now,
     validate_job_identifier,
-    validate_renderer_mode,
 )
 from domain.video_upload import (
     DEFAULT_MAX_UPLOAD_BYTES,
@@ -92,10 +91,8 @@ class JobManager:
         source_name: str,
         reader: BinaryIO,
         content_length: int,
-        renderer_mode: str = "blender",
     ) -> dict[str, object]:
         safe_name = validate_upload_metadata(source_name, content_length, self.max_upload_bytes)
-        renderer_mode = validate_renderer_mode(renderer_mode)
         job_id = uuid.uuid4().hex
         input_dir = self.upload_root / job_id
         output_dir = self.output_root / job_id
@@ -123,7 +120,6 @@ class JobManager:
             input_path=input_path,
             output_dir=output_dir,
             created_at=utc_now(),
-            renderer_mode=renderer_mode,
         )
         try:
             with self._lock:
@@ -296,7 +292,6 @@ class JobManager:
             self.config_data,
             record.output_dir,
             reuse_work=False,
-            renderer_mode=record.renderer_mode,
             cancellation_check=cancellation_event.is_set,
         )
         rng = random.Random(int(job_id[:16], 16))
@@ -457,7 +452,6 @@ class JobManager:
                 output_path=resolved_output,
                 eta_seconds=0,
                 is_legacy_output=True,
-                renderer_mode="2d",
             )
 
     def _remove_incomplete_uploads(self) -> None:

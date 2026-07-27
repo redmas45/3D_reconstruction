@@ -9,7 +9,6 @@ from typing import TypedDict
 JOB_IDENTIFIER_PATTERN = re.compile(r"[a-f0-9]{32}")
 MINIMUM_PROGRESS = 0.0
 MAXIMUM_PROGRESS = 1.0
-SUPPORTED_RENDERER_MODES = frozenset({"blender", "2d"})
 MAXIMUM_STORED_ACTIVITY_ITEMS = 80
 
 
@@ -32,6 +31,7 @@ class JobStatus(str, Enum):
 class ProcessingStage(str, Enum):
     QUEUED = "queued"
     VALIDATING = "validating"
+    SEGMENTING_SHOTS = "segmenting_shots"
     SELECTING_GAPS = "selecting_gaps"
     PREPARING = "preparing"
     DETECTING = "detecting"
@@ -58,12 +58,6 @@ def validate_job_identifier(job_id: str) -> str:
     return job_id
 
 
-def validate_renderer_mode(renderer_mode: str) -> str:
-    if renderer_mode not in SUPPORTED_RENDERER_MODES:
-        raise ValueError("Renderer mode must be 'blender' or '2d'")
-    return renderer_mode
-
-
 @dataclass
 class ProcessingJob:
     job_id: str
@@ -83,7 +77,6 @@ class ProcessingJob:
     progress_updated_at: str | None = None
     activity_log: list[JobActivity] = field(default_factory=list)
     is_legacy_output: bool = False
-    renderer_mode: str = "blender"
 
     def to_storage_payload(self) -> dict[str, object]:
         return {
@@ -103,7 +96,6 @@ class ProcessingJob:
             "progress_updated_at": self.progress_updated_at,
             "activity_log": [dict(item) for item in self.activity_log],
             "is_legacy_output": self.is_legacy_output,
-            "renderer_mode": self.renderer_mode,
         }
 
     @classmethod
@@ -140,7 +132,6 @@ class ProcessingJob:
             ),
             activity_log=_validated_activity_log(payload.get("activity_log", [])),
             is_legacy_output=bool(payload.get("is_legacy_output", False)),
-            renderer_mode=validate_renderer_mode(str(payload.get("renderer_mode", "2d"))),
         )
 
 

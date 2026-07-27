@@ -43,20 +43,52 @@ def _cosine_similarity(first: list[float], second: list[float]) -> float:
     return max(0.0, min(1.0, float(np.dot(first_vector, second_vector) / denominator)))
 
 
-def _local_tracks(detections: list[dict]) -> list[dict]:
-    grouped: dict[tuple[int, str, int], list[dict]] = defaultdict(list)
+def shot_index_lookup(shots):
+    """Frame index to shot index, or None for a frame inside a transition.
+
+    A video with no reported shot structure is one scene, so every frame maps to shot
+    zero and nothing downstream needs to distinguish the two cases.
+    """
+    spans = [(int(start), int(end)) for start, end in (shots or [])]
+
+    def lookup(frame_index: int):
+        for index, (start, end) in enumerate(spans):
+            if start <= frame_index <= end:
+                return index
+        return None if spans else 0
+
+    return lookup
+
+
+def _local_tracks(detections: list[dict], shots=None) -> list[dict]:
+    """Group detections into per-segment tracks that never span a scene cut.
+
+    Detection runs over whole visible segments, and a visible segment can contain a cut.
+    The tracker has no notion of scenes, so it will happily carry one identity straight
+    through one — producing a "person" who was really two different people in two
+    different places, with a trajectory drawn between them. Including the shot in the
+    grouping key stops that at the source rather than trying to detect it later.
+    """
+    frame_shot = shot_index_lookup(shots)
+    grouped: dict[tuple[int, object, str, int], list[dict]] = defaultdict(list)
     anonymous_index = 0
     for detection in sorted(detections, key=lambda item: item["frame"]):
         source_id = int(detection.get("source_track_id", -1))
         if source_id < 0:
             anonymous_index += 1
             source_id = -anonymous_index
-        key = (int(detection.get("segment_index", 0)), detection["class_name"], source_id)
+        key = (
+            int(detection.get("segment_index", 0)),
+            frame_shot(int(detection["frame"])),
+            detection["class_name"],
+            source_id,
+        )
         grouped[key].append(detection)
     return [
         {
             "segment_index": key[0],
-            "class_name": key[1],
+            "shot_index": key[1],
+            "class_name": key[2],
             "class_id": items[0]["class_id"],
             "detections": sorted(items, key=lambda item: item["frame"]),
             "appearance": _mean_descriptor(items),
@@ -142,6 +174,11 @@ def _boundary_matches(local_tracks: list[dict], before_segment: int, after_segme
         for after_index in after_indexes:
             if local_tracks[before_index]["class_name"] != local_tracks[after_index]["class_name"]:
                 continue
+            # Re-identification across a hidden gap is the whole point; across a scene
+            # cut it is two strangers who happen to look alike, and joining them invents
+            # a journey between two places.
+            if local_tracks[before_index]["shot_index"] != local_tracks[after_index]["shot_index"]:
+                continue
             evidence = _reidentification_score(local_tracks[before_index], local_tracks[after_index])
             if evidence["appearance_conflict"]:
                 continue
@@ -172,6 +209,9 @@ def _combine_component(tracks: list[dict], evidence: list[dict]) -> dict:
     scores = [item["score"] for item in evidence]
     return {
         "segment_index": min(track["segment_index"] for track in tracks),
+        # Components only ever join tracks from one shot, so any member's index is the
+        # component's index.
+        "shot_index": tracks[0]["shot_index"],
         "class_name": tracks[0]["class_name"],
         "class_id": tracks[0]["class_id"],
         "detections": detections,
@@ -238,6 +278,10 @@ def _summarize_track(raw_track: dict, track_id: str, fps: float) -> dict:
         "id": track_id,
         "class_name": raw_track["class_name"],
         "class_id": raw_track["class_id"],
+        # Which scene this entity belongs to. None means it was only ever seen during a
+        # transition, where the picture is a blend of two clips and its geometry means
+        # nothing — so it is evidence for the timeline but not for any camera fit.
+        "shot_index": raw_track.get("shot_index"),
         "frames_seen": len(detections),
         "first_frame": first["frame"],
         "last_frame": last["frame"],
@@ -253,8 +297,10 @@ def _summarize_track(raw_track: dict, track_id: str, fps: float) -> dict:
     }
 
 
-def build_tracks(detections: list[dict], fps: float) -> list[dict]:
-    local_tracks = [track for track in _local_tracks(detections) if len(track["detections"]) >= 2]
+def build_tracks(detections: list[dict], fps: float, shots=None) -> list[dict]:
+    local_tracks = [
+        track for track in _local_tracks(detections, shots) if len(track["detections"]) >= 2
+    ]
     merged_tracks = _merge_across_gaps(local_tracks)
     class_indexes: dict[str, int] = defaultdict(int)
     tracks: list[dict] = []
@@ -302,9 +348,10 @@ def summarize_scene(
     fps: float,
     frame_width: int,
     hidden_ranges: list[tuple[int, int]],
+    shots=None,
 ) -> dict:
     del frame_width
-    tracks = build_tracks(detections, fps=fps)
+    tracks = build_tracks(detections, fps=fps, shots=shots)
     associations = associate_objects(tracks)
     people = [track for track in tracks if track["class_name"] == "person"]
     vehicles = [track for track in tracks if track["class_name"] in VEHICLE_CLASSES]

@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import logging
 import random
 import threading
 import time
@@ -11,17 +12,24 @@ from pathlib import Path
 from typing import Callable
 
 import cv2
+import numpy
 
 from detect import RELEVANT_COCO_CLASSES, detect_scene_objects
 from evaluate import evaluate_reconstructions
-from evidence_compositor import render_evidence_reconstruction
 from gap_selector import choose_hidden_gaps
-from reconstruction_plan import build_reconstruction_plan
 from scene_intelligence import summarize_scene
 from stitch import stitch_sequence
 from visual_output import render_annotated_visible_chunk
+from application.actor_render_job import (
+    ActorJobError,
+    ActorRenderJob,
+    actor_path_is_supported,
+    render_actor_gaps,
+)
 from application.blender_pipeline import prepare_blender_assets, render_blender_gap
+from application.exemplar_library import build_exemplar_banks
 from application.evidence_reasoning import reason_about_reconstruction
+from application.plate_evidence import PlateEvidenceError, resolve_clean_plate
 from domain.cancellation import CancellationCheck, raise_if_cancelled
 from domain.configuration import load_validated_configuration
 from domain.evidence_contract import validate_visible_evidence_only
@@ -29,6 +37,7 @@ from domain.reconstruction_cache import (
     cached_detections_are_valid as _cached_detections_are_valid,
     gap_cache_configuration as _gap_cache_configuration,
     selection_cache_is_compatible as _selection_cache_is_compatible,
+    shot_contract as _shot_contract,
     source_video_contract as _source_video_contract,
 )
 from domain.presentation_manifest import (
@@ -43,8 +52,17 @@ from domain.render_runtime_budget import (
     representative_gap_index,
 )
 from domain.render_resolution import scaled_render_dimensions
+from domain.shot_timeline import (
+    Shot,
+    clip_ranges_to_shot,
+    shot_containing,
+    shot_spanning,
+    single_shot_timeline,
+)
+from infrastructure.blender_kernel_cache import kernel_cache_environment
 from infrastructure.blender_runner import DEFAULT_RENDER_STALL_TIMEOUT_SECONDS, find_blender_executable
 from infrastructure.json_files import read_json_file, write_json_file
+from infrastructure.shot_segmentation import detect_shots
 from infrastructure.media_tools import (
     VideoContract,
     encode_with_source_audio,
@@ -63,6 +81,9 @@ ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_CONFIG_PATH = ROOT / "config" / "reconstruction_config.json"
 ProgressCallback = Callable[[str, float, str], None]
 VALIDATION_PROGRESS = 0.01
+# Shot detection reads the whole video once before anything is selected, because where
+# the gaps may go depends on where the cuts are.
+SHOT_SEGMENTATION_PROGRESS = 0.02
 GAP_SELECTION_PROGRESS = 0.04
 SEGMENT_PREPARATION_START = 0.06
 SEGMENT_PREPARATION_SPAN = 0.07
@@ -80,6 +101,12 @@ STITCHING_PROGRESS = 0.94
 COMPLETED_PROGRESS = 1.0
 DEFAULT_PARALLEL_GAP_RENDERERS = 3
 BLENDER_RENDER_PROGRESS_SHARE = 0.85
+ACTOR_COMPOSITE_MODE = "actor_composite"
+# Where an actor's pixels come from. Observed footage of the actual subject beats
+# modelled geometry at the size figures occupy in real frames, and brings the scene's own
+# light, clothing, motion blur and grain with it for free.
+ACTOR_SOURCE_EXEMPLAR = "observed_exemplar"
+LOGGER = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -87,7 +114,6 @@ class PipelineOptions:
     config_data: dict
     output_dir: Path
     reuse_work: bool = False
-    renderer_mode: str = "blender"
     cancellation_check: CancellationCheck | None = None
 
 
@@ -96,10 +122,13 @@ class PreparedReconstruction:
     video_info: dict
     gap_selection: dict
     segment_paths: dict[tuple[str, int], Path]
-    reconstruction_plans: list[dict]
     scene_report: dict
     work_dir: Path
     blender_plan_paths: list[Path]
+    # The scene structure every later stage is scoped to. A video with no cuts carries a
+    # single shot spanning it, so nothing downstream needs a special case.
+    shots: tuple[tuple[int, int], ...] = ()
+    shot_report: dict | None = None
 
 
 @dataclass(frozen=True)
@@ -108,7 +137,6 @@ class TimelineRenderContext:
     prepared: PreparedReconstruction
     configuration: dict
     reuse_work: bool
-    renderer_mode: str
     blender_rendered_paths: dict[int, Path]
     cancellation_check: CancellationCheck | None
 
@@ -221,7 +249,9 @@ def reserve_timeline_segment_paths(
     return paths
 
 
-def _new_selection(info: dict, gap_config: dict, rng: random.Random) -> dict:
+def _new_selection(
+    info: dict, gap_config: dict, rng: random.Random, shots: list[tuple[int, int]] | None,
+) -> dict:
     selection = choose_hidden_gaps(
         total_frames=info["frames"],
         fps=info["fps"],
@@ -235,23 +265,58 @@ def _new_selection(info: dict, gap_config: dict, rng: random.Random) -> dict:
             "review_profile_min_video_seconds", 60.0,
         ),
         context_seconds=gap_config.get("context_seconds", 2.0),
+        shots=shots,
     )
     return {
         **selection,
         "source_video_contract": _source_video_contract(info),
         "gap_configuration": _gap_cache_configuration(gap_config),
+        "shot_contract": _shot_contract(shots),
     }
 
 
-def _load_selection(work_dir: Path, info: dict, config: dict, rng: random.Random, reuse_work: bool) -> dict:
+def _load_selection(
+    work_dir: Path,
+    info: dict,
+    config: dict,
+    rng: random.Random,
+    reuse_work: bool,
+    shots: list[tuple[int, int]] | None,
+) -> dict:
     selection_path = work_dir / "gap_selection.json"
     if reuse_work and selection_path.exists():
         selection = read_json_file(selection_path)
-        if _selection_cache_is_compatible(selection, info, config.get("gap", {})):
+        if _selection_cache_is_compatible(selection, info, config.get("gap", {}), shots):
             return selection
-    selection = _new_selection(info, config.get("gap", {}), rng)
+    selection = _new_selection(info, config.get("gap", {}), rng, shots)
     write_json(selection_path, selection)
     return selection
+
+
+def _load_shot_timeline(
+    video_path: Path,
+    work_dir: Path,
+    info: dict,
+    reuse_work: bool,
+    cancellation_check: CancellationCheck | None,
+) -> tuple[dict, list[tuple[int, int]]]:
+    """Find the cuts, so every later stage can be scoped to a single scene.
+
+    Cached like the other analysis outputs: detection re-reads the whole video, and the
+    answer only changes when the video does.
+    """
+    report_path = work_dir / "shot_report.json"
+    report = None
+    if reuse_work and report_path.exists():
+        cached = read_json_file(report_path)
+        if isinstance(cached, dict) and cached.get("frame_count") == int(info["frames"]):
+            report = cached
+    if report is None:
+        work_dir.mkdir(parents=True, exist_ok=True)
+        report = detect_shots(video_path, int(info["frames"]), cancellation_check)
+        write_json(report_path, report)
+    shots = [(int(shot["start"]), int(shot["end"])) for shot in report["shots"]]
+    return report, shots
 
 
 def _load_detections(
@@ -305,6 +370,10 @@ def _load_detections(
         pose_boundary_samples=int(yolo_config.get("pose_boundary_samples", 2)),
         progress_callback=report_detection,
         cancellation_check=cancellation_check,
+        inference_width=int(yolo_config.get("inference_width", 0)),
+        iou=float(yolo_config.get("iou", 0.7)),
+        max_detections=int(yolo_config.get("max_detections", 300)),
+        augment=bool(yolo_config.get("augment", False)),
     )
     write_json(detections_path, detections)
     write_json(manifest_path, cache_contract)
@@ -334,33 +403,11 @@ def _detection_cache_contract(
         "pose_boundary_samples": int(
             yolo_config.get("pose_boundary_samples", 2),
         ),
+        "inference_width": int(yolo_config.get("inference_width", 0)),
+        "iou": float(yolo_config.get("iou", 0.7)),
+        "max_detections": int(yolo_config.get("max_detections", 300)),
+        "augment": bool(yolo_config.get("augment", False)),
     }
-
-
-def _build_plans(scene_report: dict, selection: dict, info: dict, work_dir: Path, scene_config: dict) -> list[dict]:
-    plans: list[dict] = []
-    for gap_index, hidden_range in enumerate(selection["hidden_ranges"]):
-        plan = build_reconstruction_plan(
-            scene_report,
-            tuple(hidden_range),
-            info["fps"],
-            max_entities=scene_config.get("max_render_entities", 3),
-            min_track_frames=scene_config.get("min_track_frames", 2),
-        )
-        plan["gap_index"] = gap_index
-        plans.append(plan)
-        write_json(work_dir / "gaps" / f"gap_{gap_index:02d}" / "reconstruction_plan.json", plan)
-    manifest = [
-        {
-            "gap_index": item["gap_index"],
-            "hidden_range": item["hidden_range"],
-            "entities": len(item["entities"]),
-            "confidence": item["overall_confidence"],
-        }
-        for item in plans
-    ]
-    write_json(work_dir / "reconstruction_plans.json", manifest)
-    return plans
 
 
 def _render_visible_segment(
@@ -395,7 +442,7 @@ def _render_timeline(
     sequence: list[str] = []
     evaluation_items: list[dict] = []
     timeline = context.prepared.gap_selection["timeline"]
-    timeline_start = _timeline_render_start(context.renderer_mode)
+    timeline_start = _timeline_render_start()
     timeline_span = (RENDERING_START + RENDERING_SPAN) - timeline_start
     for item_index, segment in enumerate(timeline):
         raise_if_cancelled(context.cancellation_check)
@@ -426,12 +473,9 @@ def _render_timeline_segment(context: TimelineRenderContext, segment: dict) -> t
 def _render_hidden_segment(context: TimelineRenderContext, segment: dict) -> tuple[Path, dict]:
     prepared = context.prepared
     gap_index = segment["index"]
-    if context.renderer_mode == "blender":
-        output_path = context.blender_rendered_paths.get(gap_index)
-        if output_path is None:
-            output_path = _render_blender_hidden_segment(context, gap_index)
-    else:
-        output_path = _render_2d_hidden_segment(context, gap_index)
+    output_path = context.blender_rendered_paths.get(gap_index)
+    if output_path is None:
+        output_path = _render_blender_hidden_segment(context, gap_index)
     evaluation_item = {
         "gap_index": gap_index,
         "hidden_range": tuple(prepared.gap_selection["hidden_ranges"][gap_index]),
@@ -485,10 +529,12 @@ def _render_blender_gaps(
     context: TimelineRenderContext,
     progress_callback: ProgressCallback | None,
 ) -> dict[int, Path]:
-    if context.renderer_mode != "blender":
-        return {}
     raise_if_cancelled(context.cancellation_check)
     gap_count = len(context.prepared.gap_selection["hidden_ranges"])
+    if gap_count and _actor_render_requested(context.configuration):
+        rendered = _render_actor_gaps(context, progress_callback)
+        if rendered is not None:
+            return rendered
     worker_count = _parallel_gap_renderer_count(context.configuration, gap_count)
     if _runtime_budget_enabled(context.configuration) and gap_count > 0:
         return _render_blender_gaps_with_budget(
@@ -579,6 +625,285 @@ def _render_blender_gaps_with_budget(
         completed_indexes={representative_index},
     ))
     return rendered_paths
+
+
+def _actor_render_requested(configuration: dict) -> bool:
+    return str(
+        configuration.get("renderer", {}).get("render_mode", ACTOR_COMPOSITE_MODE)
+    ) == ACTOR_COMPOSITE_MODE
+
+
+def _actor_render_blocked(plans: list[dict]) -> str | None:
+    """The reason the actor path cannot serve this video, or None when it can.
+
+    Checked for every gap before any rendering starts: falling back halfway through
+    would leave a video whose gaps were produced by two different renderers, which is
+    worse for a forensic artifact than being uniformly slower.
+    """
+    for plan in plans:
+        supported, reason = actor_path_is_supported(plan)
+        if not supported:
+            return f"gap {plan.get('gap_index')}: {reason}"
+    return None
+
+
+def _render_actor_gaps(
+    context: TimelineRenderContext,
+    progress_callback: ProgressCallback | None,
+) -> dict[int, Path] | None:
+    """Render every gap as composited actors, or return None to use the legacy path."""
+    prepared = context.prepared
+    plans = _read_blender_plans(prepared.blender_plan_paths)
+    blocked_reason = _actor_render_blocked(plans)
+    if blocked_reason is not None:
+        LOGGER.warning(
+            "Falling back to the full-scene renderer because %s", blocked_reason,
+        )
+        return None
+    _report(
+        progress_callback, "rendering", RENDERING_START,
+        "Recovering the background plate from visible frames",
+    )
+    try:
+        plate_for_gap = _resolve_pipeline_plates(context, plans, progress_callback)
+    except PlateEvidenceError as error:
+        LOGGER.warning("Falling back to the full-scene renderer: %s", error)
+        return None
+    gap_count = len(plans)
+    tracker = ParallelGapProgress(progress_callback, gap_count, 1)
+    job = _build_actor_job(
+        context, plate_for_gap, _exemplar_bank_provider(context, plans, plate_for_gap),
+    )
+    gap_directories = [
+        prepared.work_dir / "gaps" / f"gap_{int(plan['gap_index']):02d}"
+        for plan in plans
+    ]
+    rendered = render_actor_gaps(
+        plans, gap_directories, job, context.reuse_work,
+        lambda position, completed, total: tracker.report(
+            int(plans[position]["gap_index"]), completed, total,
+        ),
+    )
+    _validate_actor_gap_videos(context, plans, rendered)
+    return rendered
+
+
+def _validate_actor_gap_videos(
+    context: TimelineRenderContext, plans: list[dict], rendered: dict[int, Path],
+) -> None:
+    """Every gap must be exactly its hidden range, at source size and rate.
+
+    The compositor guarantees this by construction, so a mismatch means the encoder
+    truncated — which would silently shorten the final video against its source.
+    """
+    info = context.prepared.video_info
+    for plan in plans:
+        gap_index = int(plan["gap_index"])
+        video_path = rendered.get(gap_index)
+        if video_path is None:
+            raise ActorJobError(f"Gap {gap_index} produced no rendered video")
+        validate_video_contract(video_path, VideoContract(
+            int(info["width"]), int(info["height"]),
+            float(info["fps"]), int(plan["frame_count"]),
+        ))
+
+
+def _pipeline_shots(prepared: PreparedReconstruction) -> tuple[Shot, ...]:
+    """The shot objects for this run; a single shot when nothing was segmented."""
+    if not prepared.shots:
+        return single_shot_timeline(int(prepared.video_info["frames"]))
+    return tuple(
+        Shot(index=index, start_frame=start, end_frame=end)
+        for index, (start, end) in enumerate(prepared.shots)
+    )
+
+
+def _resolve_pipeline_plates(
+    context: TimelineRenderContext,
+    plans: list[dict],
+    progress_callback: ProgressCallback | None = None,
+) -> Callable[[int], "numpy.ndarray"]:
+    """One background per shot, and a way to ask which one a gap belongs to.
+
+    Building a single plate for the whole video only works when the whole video is one
+    scene. Across a cut the per-pixel median averages every camera setup in the file, and
+    the ghosted composite it returns becomes the background of every reconstructed frame
+    — the largest visible defect in the output, and one no amount of actor quality fixes.
+    So the median is taken within a shot, over that shot's own visible frames.
+    """
+    prepared = context.prepared
+    selection = prepared.gap_selection
+    detections = read_json_file(prepared.work_dir / "detections.json")
+    if not isinstance(detections, list):
+        raise PlateEvidenceError("Detections are unavailable for plate extraction")
+    shots = _pipeline_shots(prepared)
+    visible_ranges = [tuple(item) for item in selection["visible_ranges"]]
+    hidden_ranges = [tuple(item) for item in selection["hidden_ranges"]]
+    frame_size = (int(prepared.video_info["height"]), int(prepared.video_info["width"]))
+
+    plates: dict[int, "numpy.ndarray"] = {}
+    for shot_index in sorted({_shot_for_plan(shots, plan) for plan in plans}):
+        shot = shots[shot_index]
+        scoped = clip_ranges_to_shot(visible_ranges, shot) if len(shots) > 1 else visible_ranges
+        if not scoped:
+            raise PlateEvidenceError(
+                f"Shot {shot_index} has no visible frames to recover a background from"
+            )
+        plate = resolve_clean_plate(
+            video_path=context.video_path,
+            plate_directory=_plate_directory(prepared.work_dir, shot_index, len(shots)),
+            visible_ranges=scoped,
+            hidden_ranges=hidden_ranges,
+            detections=detections,
+            detection_stride=int(
+                context.configuration.get("yolo", {}).get("frame_stride", 8)
+            ),
+            video_sha256=str(prepared.video_info["sha256"]),
+            reuse_work=context.reuse_work,
+            cancellation_check=context.cancellation_check,
+        )
+        if plate.image.shape[:2] != frame_size:
+            raise PlateEvidenceError(
+                f"Clean plate {plate.image.shape[:2]} does not match the source frame size"
+            )
+        if not plate.is_stable:
+            # Reported rather than fatal. A ghosted background is a visible quality
+            # problem, not a correctness one, and the operator is better served by output
+            # plus a stated caveat than by a refusal — but they must be told, not left to
+            # notice. Within a single shot this now means real camera motion or unmasked
+            # traffic, not simply that the video contained more than one scene.
+            _report(
+                progress_callback, "rendering", RENDERING_START,
+                f"Warning: the background recovered for take {shot_index + 1} is unstable "
+                f"(sample disagreement {plate.disagreement:.1f}) — the camera moves or "
+                f"unmasked motion crosses the frame, so those gaps will show a blended "
+                f"background",
+            )
+        plates[shot_index] = plate.image
+
+    gap_shots = {int(plan["gap_index"]): _shot_for_plan(shots, plan) for plan in plans}
+    return lambda gap_index: plates[gap_shots[gap_index]]
+
+
+def _exemplar_bank_provider(
+    context: TimelineRenderContext,
+    plans: list[dict],
+    plate_for_gap: Callable[[int], numpy.ndarray],
+) -> Callable[[int], dict] | None:
+    """Supplies each gap with cut-outs of its own entities from visible footage.
+
+    Banks are built once per shot rather than once per gap: cutting entities out means
+    walking the video, and every gap in a take shares both that take's background and
+    most of its cast.
+    """
+    prepared = context.prepared
+    if str(
+        context.configuration.get("renderer", {}).get("actor_source", ACTOR_SOURCE_EXEMPLAR)
+    ) != ACTOR_SOURCE_EXEMPLAR:
+        return None
+    tracks = {
+        str(track["id"]): track for track in prepared.scene_report.get("tracks", [])
+    }
+    if not tracks:
+        return None
+    shots = _pipeline_shots(prepared)
+    hidden_ranges = [tuple(item) for item in prepared.gap_selection["hidden_ranges"]]
+    plans_by_index = {int(plan["gap_index"]): plan for plan in plans}
+    shot_of = {index: _shot_for_plan(shots, plan) for index, plan in plans_by_index.items()}
+    cache: dict[int, dict] = {}
+
+    def banks_for(gap_index: int) -> dict:
+        shot_index = shot_of.get(gap_index, 0)
+        if shot_index not in cache:
+            wanted: dict[str, list[dict]] = {}
+            for other_index, other_plan in plans_by_index.items():
+                if shot_of.get(other_index) != shot_index:
+                    continue
+                for entity in other_plan.get("entities", []):
+                    track = tracks.get(str(entity.get("id")))
+                    if track is not None:
+                        wanted[str(entity["id"])] = track.get("detections", [])
+            shot = shots[shot_index]
+            try:
+                cache[shot_index] = build_exemplar_banks(
+                    context.video_path,
+                    plate_for_gap(gap_index),
+                    wanted,
+                    hidden_ranges,
+                    shot_bounds=(shot.start_frame, shot.end_frame),
+                    cancellation_check=context.cancellation_check,
+                )
+            except (OSError, RuntimeError) as error:
+                # Falling back to modelled geometry is a quality loss, not a failure.
+                LOGGER.warning(
+                    "Could not cut actors out of take %d: %s", shot_index, error,
+                )
+                cache[shot_index] = {}
+        return cache[shot_index]
+
+    return banks_for
+
+
+def _plate_directory(work_dir: Path, shot_index: int, shot_count: int) -> Path:
+    """Keep the familiar single-plate layout for single-take video."""
+    if shot_count <= 1:
+        return work_dir / "plate"
+    return work_dir / "plate" / f"shot_{shot_index:02d}"
+
+
+def _shot_for_plan(shots: tuple[Shot, ...], plan: dict) -> int:
+    """Which shot a gap sits in.
+
+    Gap selection places every gap wholly inside one shot, so this normally just looks
+    the answer up. A selection restored from a cache written before segmentation existed
+    can still straddle a cut; that gap is attributed to the shot holding its first frame
+    so the run completes with the closest real background rather than failing.
+    """
+    hidden = plan.get("hidden_range", {})
+    start_frame = int(hidden.get("start", 0))
+    end_frame = int(hidden.get("end", start_frame))
+    spanning = shot_spanning(shots, start_frame, end_frame)
+    if spanning is not None:
+        return spanning.index
+    containing = shot_containing(shots, start_frame)
+    if containing is not None:
+        LOGGER.warning(
+            "Gap %s spans frames %d-%d, which crosses a scene cut; compositing it onto "
+            "the background of the take it starts in",
+            plan.get("gap_index"), start_frame, end_frame,
+        )
+        return containing.index
+    LOGGER.warning(
+        "Gap %s at frames %d-%d begins inside a transition; using the first take's "
+        "background", plan.get("gap_index"), start_frame, end_frame,
+    )
+    return 0
+
+
+def _build_actor_job(
+    context: TimelineRenderContext, plate_for_gap, exemplar_banks_for_gap=None,
+) -> ActorRenderJob:
+    prepared = context.prepared
+    renderer = context.configuration.get("renderer", {})
+    job_root = prepared.work_dir / "actor_job"
+    return ActorRenderJob(
+        blender_executable=find_blender_executable(),
+        project_root=ROOT,
+        job_root=job_root,
+        plate_for_gap=plate_for_gap,
+        frame_width=int(prepared.video_info["width"]),
+        frame_height=int(prepared.video_info["height"]),
+        source_fps=float(prepared.video_info["fps"]),
+        stall_timeout_seconds=float(
+            renderer.get(
+                "gap_render_stall_timeout_seconds", DEFAULT_RENDER_STALL_TIMEOUT_SECONDS,
+            )
+        ),
+        environment_overlay=kernel_cache_environment(job_root / "kernel_cache"),
+        library_directory=ROOT / "assets" / "actors",
+        cancellation_check=context.cancellation_check,
+        exemplar_banks_for_gap=exemplar_banks_for_gap,
+    )
 
 
 def _runtime_projection_message(
@@ -742,23 +1067,8 @@ def _report_parallel_render_progress(
     _report(callback, "rendering", progress, detail)
 
 
-def _timeline_render_start(renderer_mode: str) -> float:
-    if renderer_mode != "blender":
-        return RENDERING_START
+def _timeline_render_start() -> float:
     return RENDERING_START + (RENDERING_SPAN * BLENDER_RENDER_PROGRESS_SHARE)
-
-
-def _render_2d_hidden_segment(context: TimelineRenderContext, gap_index: int) -> Path:
-    prepared = context.prepared
-    output_path = prepared.work_dir / "gaps" / f"gap_{gap_index:02d}" / "evidence_reconstruction.mp4"
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    render_evidence_reconstruction(
-        str(output_path), str(context.video_path), prepared.reconstruction_plans[gap_index], prepared.scene_report,
-        prepared.video_info["width"], prepared.video_info["height"], prepared.video_info["fps"],
-        context.configuration.get("visualization", {}),
-        context.cancellation_check,
-    )
-    return output_path
 
 
 def _evaluate(
@@ -782,9 +1092,17 @@ def _evaluate(
     )
 
 
-def _build_scene_report(detections: list[dict], info: dict, selection: dict, video_path: Path) -> dict:
+def _build_scene_report(
+    detections: list[dict],
+    info: dict,
+    selection: dict,
+    video_path: Path,
+    shots: tuple[tuple[int, int], ...] = (),
+) -> dict:
     scene_report = summarize_scene(
-        detections, info["fps"], info["width"], [tuple(item) for item in selection["hidden_ranges"]],
+        detections, info["fps"], info["width"],
+        [tuple(item) for item in selection["hidden_ranges"]],
+        shots=shots,
     )
     scene_report["video"] = {"path": str(video_path), **info}
     scene_report["visible_ranges"] = [
@@ -802,14 +1120,23 @@ def _prepare_reconstruction(
     raise_if_cancelled(options.cancellation_check)
     config = options.config_data
     _report(progress_callback, "validating", VALIDATION_PROGRESS, "Checking runtime tools and video metadata")
-    _validate_runtime_dependencies(options.renderer_mode)
+    _validate_runtime_dependencies()
     info = video_info(video_path)
     validate_constant_frame_rate(video_path, info["fps"], options.cancellation_check)
     info = {**info, "sha256": _source_video_sha256(video_path, options.cancellation_check)}
     options.output_dir.mkdir(parents=True, exist_ok=True)
     work_dir = options.output_dir / "_work" / f"{video_path.stem}_{info['sha256'][:12]}"
-    _report(progress_callback, "selecting_gaps", GAP_SELECTION_PROGRESS, "Selecting distributed 1–3 second gaps")
-    selection = _load_selection(work_dir, info, config, rng, options.reuse_work)
+    _report(progress_callback, "segmenting_shots", SHOT_SEGMENTATION_PROGRESS, "Finding scene cuts")
+    shot_report, shots = _load_shot_timeline(
+        video_path, work_dir, info, options.reuse_work, options.cancellation_check,
+    )
+    _report(
+        progress_callback,
+        "selecting_gaps",
+        GAP_SELECTION_PROGRESS,
+        _gap_selection_detail(shot_report),
+    )
+    selection = _load_selection(work_dir, info, config, rng, options.reuse_work, shots)
     segment_paths = reserve_timeline_segment_paths(
         selection["timeline"], work_dir / "segments", progress_callback,
     )
@@ -823,8 +1150,8 @@ def _prepare_reconstruction(
         options.cancellation_check,
     )
     _report(progress_callback, "planning", BASE_PLANNING_PROGRESS, "Building bounded reconstruction hypotheses")
-    scene_report, blender_plan_paths, plans = _prepare_scene_and_plans(
-        video_path, options, info, selection, work_dir, detections,
+    scene_report, blender_plan_paths = _prepare_scene_and_blender_plans(
+        video_path, options, info, selection, work_dir, detections, tuple(shots),
     )
     if blender_plan_paths:
         _report(progress_callback, "extracting_clues", CLUE_EXTRACTION_PROGRESS, "Writing the visible-only evidence ledger")
@@ -850,39 +1177,43 @@ def _prepare_reconstruction(
         "Finalized validated reconstruction plans",
     )
     return PreparedReconstruction(
-        info, selection, segment_paths, plans, scene_report, work_dir, blender_plan_paths,
+        info, selection, segment_paths, scene_report, work_dir, blender_plan_paths,
+        tuple(shots), shot_report,
     )
 
 
-def _prepare_scene_and_plans(
+def _gap_selection_detail(shot_report: dict) -> str:
+    shot_count = int(shot_report.get("shot_count", 1))
+    if shot_count <= 1:
+        return "Placing evidence gaps across a single continuous take"
+    return f"Placing evidence gaps inside {shot_count} separate takes"
+
+
+def _prepare_scene_and_blender_plans(
     video_path: Path,
     options: PipelineOptions,
     info: dict,
     selection: dict,
     work_dir: Path,
     detections: list[dict],
-) -> tuple[dict, list[Path], list[dict]]:
+    shots: tuple[tuple[int, int], ...] = (),
+) -> tuple[dict, list[Path]]:
     config = options.config_data
-    scene_report = _build_scene_report(detections, info, selection, video_path)
+    scene_report = _build_scene_report(detections, info, selection, video_path, shots)
     validate_visible_evidence_only(scene_report)
-    blender_plan_paths: list[Path] = []
-    if options.renderer_mode == "blender":
-        blender_assets = prepare_blender_assets(
-            video_path,
-            scene_report,
-            selection["hidden_ranges"],
-            work_dir,
-            int(config.get("scene", {}).get("max_render_entities", 3)),
-            config.get("renderer", {}),
-            options.cancellation_check,
-        )
-        scene_report = blender_assets.scene_report
-        blender_plan_paths = blender_assets.plan_paths
-    write_json(work_dir / "scene_report.json", scene_report)
-    plans = [] if options.renderer_mode == "blender" else _build_plans(
-        scene_report, selection, info, work_dir, config.get("scene", {})
+    blender_assets = prepare_blender_assets(
+        video_path,
+        scene_report,
+        selection["hidden_ranges"],
+        work_dir,
+        int(config.get("scene", {}).get("max_render_entities", 3)),
+        config.get("renderer", {}),
+        options.cancellation_check,
+        shots,
     )
-    return scene_report, blender_plan_paths, plans
+    scene_report = blender_assets.scene_report
+    write_json(work_dir / "scene_report.json", scene_report)
+    return scene_report, blender_assets.plan_paths
 
 
 def _render_and_finalize(
@@ -910,7 +1241,6 @@ def _render_and_finalize(
         prepared.blender_plan_paths,
         prepared.work_dir,
         final_output,
-        options.renderer_mode,
     )
     write_presentation_manifest(
         presentation, prepared.work_dir / "presentation_manifest.json",
@@ -935,7 +1265,6 @@ def _prepare_timeline_render_context(
         prepared,
         options.config_data,
         options.reuse_work,
-        options.renderer_mode,
         {},
         options.cancellation_check,
     )
@@ -945,7 +1274,6 @@ def _prepare_timeline_render_context(
         prepared,
         options.config_data,
         options.reuse_work,
-        options.renderer_mode,
         rendered_gap_paths,
         options.cancellation_check,
     )
@@ -998,13 +1326,10 @@ def _materialize_hidden_truth(
         )
 
 
-def _validate_runtime_dependencies(renderer_mode: str) -> None:
-    if renderer_mode not in {"blender", "2d"}:
-        raise ValueError("Renderer mode must be 'blender' or '2d'")
+def _validate_runtime_dependencies() -> None:
     find_media_tool("ffmpeg")
     find_media_tool("ffprobe")
-    if renderer_mode == "blender":
-        find_blender_executable()
+    find_blender_executable()
 
 
 def process_video(

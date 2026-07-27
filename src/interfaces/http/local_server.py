@@ -35,8 +35,70 @@ MAXIMUM_FAILED_UPLOAD_DRAIN_BYTES = 1024 * 1024
 FAILED_UPLOAD_DRAIN_TIMEOUT_SECONDS = 2.0
 
 
+DEFAULT_FRAME_ANCESTORS = ("'self'",)
+COLAB_PROXY_HOST_SUFFIX = ".googleusercontent.com"
+COLAB_FRAME_ANCESTORS = ("'self'", "https://*.googleusercontent.com", "https://*.colab.research.google.com")
+
+
 class InvalidRangeError(ValueError):
     pass
+
+
+class EmbeddingPolicy:
+    """Controls whether the UI may be framed, and by whom.
+
+    The server is unauthenticated and loopback-bound, so the default refuses framing
+    outright and accepts only loopback Host headers. That is right for `python app.py`
+    on a workstation and wrong for Colab, where the page is only reachable *because*
+    it is framed by Google's authenticated notebook proxy.
+
+    Colab therefore opts in explicitly rather than the default being loosened for
+    everyone. `allow_framing` swaps `X-Frame-Options: DENY` for a CSP `frame-ancestors`
+    allowlist, since `SAMEORIGIN` would still block a cross-origin proxy frame.
+    """
+
+    def __init__(
+        self,
+        allow_framing: bool = False,
+        frame_ancestors: tuple[str, ...] = DEFAULT_FRAME_ANCESTORS,
+        allowed_host_suffixes: tuple[str, ...] = (),
+    ) -> None:
+        self.allow_framing = allow_framing
+        self.frame_ancestors = frame_ancestors
+        self.allowed_host_suffixes = tuple(
+            suffix.lower().rstrip(".") for suffix in allowed_host_suffixes
+        )
+
+    def permits_host(self, hostname: str) -> bool:
+        normalized = hostname.lower().rstrip(".")
+        if _is_loopback_host(normalized):
+            return True
+        return any(
+            normalized == suffix.lstrip(".") or normalized.endswith(suffix)
+            for suffix in self.allowed_host_suffixes
+        )
+
+    def content_security_policy(self) -> str:
+        directives = [
+            "default-src 'self'",
+            "media-src 'self'",
+            "script-src 'self'",
+            "style-src 'self'",
+        ]
+        if self.allow_framing:
+            directives.append(f"frame-ancestors {' '.join(self.frame_ancestors)}")
+        else:
+            directives.append("frame-ancestors 'none'")
+        return "; ".join(directives)
+
+
+def colab_embedding_policy() -> EmbeddingPolicy:
+    """Policy for serving the UI through Colab's authenticated notebook proxy."""
+    return EmbeddingPolicy(
+        allow_framing=True,
+        frame_ancestors=COLAB_FRAME_ANCESTORS,
+        allowed_host_suffixes=(COLAB_PROXY_HOST_SUFFIX,),
+    )
 
 
 class CountingRequestReader:
@@ -54,10 +116,17 @@ class ReconstructionHTTPServer(ThreadingHTTPServer):
     daemon_threads = False
     block_on_close = True
 
-    def __init__(self, address: tuple[str, int], manager: JobManager, web_root: Path) -> None:
+    def __init__(
+        self,
+        address: tuple[str, int],
+        manager: JobManager,
+        web_root: Path,
+        embedding_policy: EmbeddingPolicy | None = None,
+    ) -> None:
         super().__init__(address, ReconstructionRequestHandler)
         self.manager = manager
         self.web_root = web_root.resolve()
+        self.embedding_policy = embedding_policy or EmbeddingPolicy()
         self.upload_semaphore = threading.BoundedSemaphore(value=1)
         self._active_connections: set[socket.socket] = set()
         self._active_connections_lock = threading.Lock()
@@ -132,7 +201,6 @@ class ReconstructionRequestHandler(BaseHTTPRequestHandler):
             self._send_error(HTTPStatus.NOT_FOUND, "Endpoint was not found")
             return
         source_name = unquote(self.headers.get("X-File-Name", ""))
-        renderer_mode = self.headers.get("X-Renderer-Mode", "blender")
         if not self.server.upload_semaphore.acquire(blocking=False):
             self._send_error(HTTPStatus.CONFLICT, "Another video upload is already in progress")
             return
@@ -140,7 +208,7 @@ class ReconstructionRequestHandler(BaseHTTPRequestHandler):
         request_reader = CountingRequestReader(self.rfile)
         try:
             content_length = int(self.headers.get("Content-Length", "0"))
-            job = self.server.manager.create_job(source_name, request_reader, content_length, renderer_mode)
+            job = self.server.manager.create_job(source_name, request_reader, content_length)
         except (UploadValidationError, ValueError) as error:
             self._drain_failed_upload(content_length - request_reader.bytes_read)
             self._send_error(HTTPStatus.BAD_REQUEST, str(error))
@@ -366,28 +434,37 @@ class ReconstructionRequestHandler(BaseHTTPRequestHandler):
             hostname = urlsplit(f"//{host_header}").hostname
         except ValueError:
             hostname = None
-        if hostname is not None and _is_loopback_host(hostname):
+        if hostname is not None and self.server.embedding_policy.permits_host(hostname):
             return True
         self._send_error(HTTPStatus.MISDIRECTED_REQUEST, "Request host is not allowed")
         return False
 
     def _send_security_headers(self) -> None:
+        policy = self.server.embedding_policy
         self.send_header("X-Content-Type-Options", "nosniff")
-        self.send_header("X-Frame-Options", "DENY")
+        # X-Frame-Options has no cross-origin allowlist, so framing is governed by CSP
+        # frame-ancestors when embedding is permitted.
+        if not policy.allow_framing:
+            self.send_header("X-Frame-Options", "DENY")
         self.send_header("Referrer-Policy", "no-referrer")
-        self.send_header("Content-Security-Policy", "default-src 'self'; media-src 'self'; script-src 'self'; style-src 'self'")
+        self.send_header("Content-Security-Policy", policy.content_security_policy())
 
     def log_message(self, message_format: str, *args: object) -> None:
         LOGGER.info("%s - %s", self.address_string(), message_format % args)
 
 
-def build_server(address: tuple[str, int], manager: JobManager, web_root: Path) -> ReconstructionHTTPServer:
+def build_server(
+    address: tuple[str, int],
+    manager: JobManager,
+    web_root: Path,
+    embedding_policy: EmbeddingPolicy | None = None,
+) -> ReconstructionHTTPServer:
     if not _is_loopback_host(address[0]):
         raise ValueError("The unauthenticated reconstruction server can bind only to loopback")
     if not (web_root / "index.html").is_file():
         raise FileNotFoundError(f"Web UI was not found: {web_root}")
     server_class = IPv6ReconstructionHTTPServer if ":" in address[0] else ReconstructionHTTPServer
-    return server_class(address, manager, web_root)
+    return server_class(address, manager, web_root, embedding_policy)
 
 
 def _is_loopback_host(hostname: str) -> bool:

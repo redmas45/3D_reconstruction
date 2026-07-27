@@ -124,7 +124,6 @@ const UPLOAD_TIMEOUT_MILLISECONDS = 300_000;
  * @property {string|null} download_url
  * @property {number|null} size_bytes
  * @property {boolean} is_legacy_output
- * @property {"blender"|"2d"} renderer_mode
  * @property {ReasoningSummary|null} reasoning
  * @property {PresentationManifest|null} presentation
  */
@@ -140,18 +139,16 @@ export async function fetchProcessingJobs() {
 
 /**
  * @param {File} videoFile
- * @param {"blender"|"2d"} rendererMode
  * @param {(percentage: number) => void} reportUploadProgress
  * @returns {Promise<ProcessingJob>}
  */
-export function uploadVideoJob(videoFile, rendererMode, reportUploadProgress) {
+export function uploadVideoJob(videoFile, reportUploadProgress) {
   return new Promise((resolve, reject) => {
     const request = new XMLHttpRequest();
     request.open("POST", JOBS_ENDPOINT);
     request.timeout = UPLOAD_TIMEOUT_MILLISECONDS;
     request.setRequestHeader("Content-Type", videoFile.type || "application/octet-stream");
     request.setRequestHeader("X-File-Name", encodeURIComponent(videoFile.name));
-    request.setRequestHeader("X-Renderer-Mode", rendererMode);
     request.upload.addEventListener("progress", (event) => {
       if (!event.lengthComputable) return;
       reportUploadProgress(Math.round((event.loaded / event.total) * 100));

@@ -37,7 +37,6 @@ class PresentationManifestTests(unittest.TestCase):
                 [plan_path],
                 work_directory,
                 work_directory / "result.mp4",
-                "blender",
             )
 
         self.assertEqual(0.75, manifest["source"]["observed_fraction"])

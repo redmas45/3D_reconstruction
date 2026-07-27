@@ -1,4 +1,5 @@
 import gc
+import math
 from pathlib import Path
 from typing import Callable
 
@@ -34,6 +35,15 @@ def _scale_frame(frame: np.ndarray, downscale_width: int) -> tuple[np.ndarray, f
     scale = downscale_width / width
     resized = cv2.resize(frame, (int(width * scale), int(height * scale)))
     return resized, scale
+
+
+def _letterbox_size(width: int) -> int:
+    """Round an inference width up to the model's stride of 32.
+
+    Ultralytics silently rounds a non-conforming size and warns; doing it here keeps the
+    value we log identical to the value the model used.
+    """
+    return max(320, int(math.ceil(int(width) / 32.0) * 32))
 
 
 def _clamp_bbox(bbox: list[int], width: int, height: int) -> list[int]:
@@ -206,6 +216,10 @@ def detect_scene_objects(
     pose_boundary_samples: int = 2,
     progress_callback: Callable[[int, int], None] | None = None,
     cancellation_check: CancellationCheck | None = None,
+    inference_width: int = 0,
+    iou: float = 0.7,
+    max_detections: int = 300,
+    augment: bool = False,
 ) -> list[dict]:
     selected_classes = class_ids or sorted(RELEVANT_COCO_CLASSES)
     print(f"[Detector] Initializing {model_name} for sequential scene tracking...")
@@ -217,7 +231,20 @@ def detect_scene_objects(
     if not capture.isOpened():
         raise FileNotFoundError(f"Cannot open video file: {video_path}")
 
-    track_args = {"classes": selected_classes, "conf": conf}
+    # `imgsz` is the letterbox size the model actually sees, and leaving it at the
+    # library default silently discards resolution: a frame prepared at 960 wide is
+    # resized to 640 before inference, and a pedestrian 30 pixels tall in the source
+    # becomes 20 and drops below the detector's floor. Setting it to the prepared width
+    # is what keeps distant entities detectable.
+    track_args = {
+        "classes": selected_classes,
+        "conf": conf,
+        "iou": float(iou),
+        "max_det": int(max_detections),
+        "augment": bool(augment),
+    }
+    if inference_width > 0:
+        track_args["imgsz"] = _letterbox_size(inference_width)
     if tracker_config:
         track_args["tracker"] = str(Path(tracker_config).resolve())
     settings = {

@@ -220,7 +220,6 @@ class ProcessingJobManagerTests(unittest.TestCase):
                 created_job = manager.create_job("Judge Clip.MP4", io.BytesIO(video_bytes), len(video_bytes))
                 completed_job = self._wait_for_completion(manager, created_job["id"])
                 self.assertEqual("completed", completed_job["status"])
-                self.assertEqual("blender", completed_job["renderer_mode"])
                 self.assertEqual(1.0, completed_job["progress"])
                 self.assertEqual("finished", completed_job["eta_status"])
                 activity_stages = [item["stage"] for item in completed_job["activity_log"]]
@@ -239,25 +238,6 @@ class ProcessingJobManagerTests(unittest.TestCase):
                 self.assertFalse(upload_directory.exists())
                 self.assertFalse(output_directory.exists())
                 self.assertEqual([], manager.list_jobs())
-            finally:
-                manager.shutdown()
-
-    def test_job_persists_selected_fallback_renderer(self) -> None:
-        with tempfile.TemporaryDirectory() as temporary_directory:
-            temporary_root = Path(temporary_directory)
-            video_bytes = create_test_video(temporary_root / "fixture.mp4")
-            manager = JobManager(
-                temporary_root / "uploads",
-                temporary_root / "outputs",
-                config_data={},
-                processor=copy_video_processor,
-            )
-            try:
-                created_job = manager.create_job(
-                    "fallback.mp4", io.BytesIO(video_bytes), len(video_bytes), renderer_mode="2d"
-                )
-                completed_job = self._wait_for_completion(manager, created_job["id"])
-                self.assertEqual("2d", completed_job["renderer_mode"])
             finally:
                 manager.shutdown()
 

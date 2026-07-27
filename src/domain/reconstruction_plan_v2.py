@@ -10,9 +10,22 @@ from domain.render_resolution import adaptive_render_scale_percent
 PLAN_SCHEMA_VERSION = 2
 PLAN_STRATEGY = "ai_inferred_forensic_3d"
 RENDERABLE_CLASSES = {"person", "car", "truck", "bus", "motorcycle", "bicycle"}
-DEFAULT_MAX_RENDER_ENTITIES = 3
+# A cost guard, not an editorial choice. Confidence and relevance already decide which
+# entities the evidence supports; this only stops a pathologically crowded frame from
+# rendering unboundedly. Set to 3 it was the binding constraint on ordinary street
+# footage — a gap with twenty tracked candidates rendered three, and the reconstruction
+# read as a deserted street no matter how good the actors were.
+DEFAULT_MAX_RENDER_ENTITIES = 16
 MINIMUM_PRESENTATION_CONFIDENCE = 0.45
-MINIMUM_PRESENTATION_RELEVANCE = 0.12
+# Relevance is a *priority*, not a belief: it is confidence multiplied by how large, how
+# near and how continuously seen an entity was, so four sub-one factors compound and an
+# ordinary pedestrian a hundred pixels tall scores under 0.1. At 0.12 that floor was
+# rejecting well-tracked people for the crime of standing further away — 135 of 172
+# exclusions on a single-camera street scene — which is how a busy pavement reconstructs
+# as three people. Whether an entity is believed is what `MINIMUM_PRESENTATION_CONFIDENCE`
+# decides; relevance now only orders what is drawn first, and the floor exists to drop
+# entities too marginal to place at all.
+MINIMUM_PRESENTATION_RELEVANCE = 0.04
 MAXIMUM_WEAK_PRESENTATION_ENTITIES = 0
 MAXIMUM_DUPLICATE_BOUNDARY_IOU = 0.55
 MINIMUM_VISIBLE_ANCHOR_FRACTION = 0.05

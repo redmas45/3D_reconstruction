@@ -13,3 +13,15 @@ data/
 # Python cache
 __pycache__/
 *.pyc
+
+# Interface dependencies
+ui/node_modules/
+ui/dist/
+# Built artifact: rebuild with scripts/build_actor_library.py
+assets/actors/library.blend
+assets/actors/manifest.json
+# Blender writes a .blend1 backup beside every save
+*.blend1
+# Runtime job storage
+data/uploads/
+data/outputs/

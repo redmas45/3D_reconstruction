@@ -34,13 +34,6 @@ class ConfigurationValidationTests(unittest.TestCase):
         with self.assertRaisesRegex(ConfigurationValidationError, "scene"):
             validate_configuration(invalid_configuration)
 
-    def test_rejects_unknown_default_renderer(self) -> None:
-        invalid_configuration = copy.deepcopy(self.configuration)
-        invalid_configuration["renderer"]["default_mode"] = "unknown"
-
-        with self.assertRaisesRegex(ConfigurationValidationError, "renderer.default_mode"):
-            validate_configuration(invalid_configuration)
-
     def test_rejects_invalid_pose_confidence(self) -> None:
         invalid_configuration = copy.deepcopy(self.configuration)
         invalid_configuration["yolo"]["pose_confidence"] = 1.5

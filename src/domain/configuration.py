@@ -21,6 +21,9 @@ MINIMUM_REASONING_OUTPUT_TOKENS = 512
 MAXIMUM_REASONING_OUTPUT_TOKENS = 32_000
 SUPPORTED_REASONING_EFFORTS = frozenset({"none", "low", "medium", "high", "xhigh"})
 SUPPORTED_PRODUCTION_HUD_MODES = frozenset({"minimal", "technical"})
+# `actor_composite` renders only detected entities onto a recovered photographic plate;
+# `full_scene` is the older path that renders a synthetic environment per gap.
+SUPPORTED_RENDER_MODES = frozenset({"actor_composite", "full_scene"})
 
 
 class ConfigurationValidationError(ValueError):
@@ -96,9 +99,6 @@ def _validate_yolo_configuration(yolo_configuration: dict) -> None:
 
 
 def _validate_renderer_configuration(renderer_configuration: dict) -> None:
-    default_mode = renderer_configuration.get("default_mode")
-    if default_mode not in {"blender", "2d"}:
-        raise ConfigurationValidationError("renderer.default_mode must be 'blender' or '2d'")
     for field_name in ("preview_scale_percent", "production_scale_percent"):
         scale_percent = _required_integer(renderer_configuration, field_name)
         if not 1 <= scale_percent <= 100:
@@ -172,6 +172,11 @@ def _validate_smart_renderer_configuration(configuration: dict) -> None:
         raise ConfigurationValidationError("renderer.hybrid_static_backplate must be boolean")
     if configuration.get("production_hud_mode") not in SUPPORTED_PRODUCTION_HUD_MODES:
         raise ConfigurationValidationError("renderer.production_hud_mode is unsupported")
+    render_mode = configuration.get("render_mode")
+    if render_mode is not None and render_mode not in SUPPORTED_RENDER_MODES:
+        raise ConfigurationValidationError(
+            "renderer.render_mode must be actor_composite or full_scene"
+        )
     if (
         int(configuration["maximum_render_long_edge"])
         < int(configuration["minimum_render_long_edge"])

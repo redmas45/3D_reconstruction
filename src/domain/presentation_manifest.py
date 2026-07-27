@@ -11,6 +11,10 @@ MAXIMUM_PRESENTED_REJECTIONS_PER_ENTITY = 4
 MAXIMUM_PRESENTED_EVIDENCE_REFERENCES = 8
 PUBLIC_REASONING_FILENAME = "reasoning_public.json"
 
+# Blender is the only renderer. The manifest keeps the field so schema-v3 consumers
+# written against the two-renderer era still parse.
+RENDERER_MODE = "blender"
+
 
 def build_presentation_manifest(
     video_info: dict,
@@ -19,7 +23,6 @@ def build_presentation_manifest(
     blender_plan_paths: list[Path],
     work_directory: Path,
     output_path: Path,
-    renderer_mode: str,
 ) -> dict:
     reasoning = _read_reasoning(work_directory)
     plans = _read_plans(blender_plan_paths)
@@ -53,7 +56,7 @@ def build_presentation_manifest(
         "method": _method_contract(reasoning, gaps),
         "top_clues": _top_clues(reasoning),
         "gaps": gaps,
-        "render": _render_contract(renderer_mode, plans),
+        "render": _render_contract(plans),
         "output": {
             "filename": output_path.name,
             "gap_count": len(gaps),
@@ -302,13 +305,13 @@ def _top_clues(reasoning: dict) -> list[dict]:
     ]
 
 
-def _render_contract(renderer_mode: str, plans: dict[int, dict]) -> dict:
+def _render_contract(plans: dict[int, dict]) -> dict:
     first_plan = plans[min(plans)] if plans else {}
     render = first_plan.get("render", {})
     environment = first_plan.get("environment", {})
     return {
-        "mode": renderer_mode,
-        "engine": str(render.get("engine", "2.5D")),
+        "mode": RENDERER_MODE,
+        "engine": str(render.get("engine", "")),
         "target_fps": int(render.get("target_fps", 0)),
         "hybrid_static_backplate": bool(environment.get("hybrid_backplate_enabled", False)),
         "production_hud_mode": str(render.get("production_hud_mode", "minimal")),

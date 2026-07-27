@@ -6,6 +6,10 @@ GROUND_IMAGE_MARGIN = 0.01
 MINIMUM_GROUND_RAY_DOWNWARD_COMPONENT = 0.01
 CAMERA_LOOK_DISTANCE_METERS = 10.0
 
+# Below this forward depth perspective division is numerically meaningless, so a point
+# is reported off-screen rather than projected to a wild coordinate.
+MINIMUM_PROJECTION_DEPTH_METERS = 0.05
+
 
 def camera_pose(
     camera_height_meters: float,
@@ -62,6 +66,111 @@ def image_point_to_world(
         round(ray[1] * distance, 4),
         0.0,
     ]
+
+
+def camera_basis(
+    frame_width: int,
+    frame_height: int,
+    camera_contract: dict,
+) -> dict:
+    """Orthonormal camera axes plus the sensor tangents, shared by both directions.
+
+    `_ground_ray` builds a ray from this basis and `world_point_to_image` inverts it.
+    Deriving both from one function is what keeps the projection and its inverse from
+    drifting apart, which would put composited actors in the wrong place (§5.2).
+    """
+    horizontal_tangent = math.tan(
+        math.radians(float(camera_contract["field_of_view_degrees"])) / 2.0,
+    )
+    vertical_tangent = horizontal_tangent * frame_height / frame_width
+    horizon_axis = (0.5 - float(camera_contract["horizon_normalized_y"])) * 2.0
+    downward_pitch = math.atan(horizon_axis * vertical_tangent)
+    return {
+        "right": (1.0, 0.0, 0.0),
+        "forward": (0.0, math.cos(downward_pitch), -math.sin(downward_pitch)),
+        "upward": (0.0, math.sin(downward_pitch), math.cos(downward_pitch)),
+        "horizontal_tangent": horizontal_tangent,
+        "vertical_tangent": vertical_tangent,
+    }
+
+
+def world_point_to_image(
+    world_point: list[float] | tuple[float, float, float],
+    frame_width: int,
+    frame_height: int,
+    camera_contract: dict,
+) -> tuple[float, float] | None:
+    """Project a world point to pixel coordinates.
+
+    Returns None when the point is at or behind the camera plane, where perspective
+    division is undefined — callers must treat that as "not on screen" rather than
+    clamping it to an edge, which would drag the render region across the frame.
+    """
+    basis = camera_basis(frame_width, frame_height, camera_contract)
+    camera_position = [float(value) for value in camera_contract["position"]]
+    offset = tuple(float(world_point[index]) - camera_position[index] for index in range(3))
+    depth = _dot(offset, basis["forward"])
+    if depth <= MINIMUM_PROJECTION_DEPTH_METERS:
+        return None
+    normalized_x = _dot(offset, basis["right"]) / (depth * basis["horizontal_tangent"])
+    normalized_y = _dot(offset, basis["upward"]) / (depth * basis["vertical_tangent"])
+    return (
+        (normalized_x / 2.0 + 0.5) * frame_width,
+        (0.5 - normalized_y / 2.0) * frame_height,
+    )
+
+
+def supports_projection(camera_contract: dict) -> bool:
+    """Whether `world_point_to_image` can be evaluated for this contract.
+
+    The legacy ground mapping is depth-table based and has no pinhole parameters, so
+    world points cannot be projected forward from it. Callers use this to decide
+    whether actor placement is possible at all rather than discovering it as a KeyError
+    halfway through a render.
+    """
+    if camera_contract.get("projection_model") != "pinhole_ground_plane_v2":
+        return False
+    required = ("field_of_view_degrees", "horizon_normalized_y", "position")
+    if any(camera_contract.get(name) is None for name in required):
+        return False
+    position = camera_contract["position"]
+    return isinstance(position, (list, tuple)) and len(position) >= 3
+
+
+def blender_camera_parameters(
+    frame_width: int,
+    frame_height: int,
+    camera_contract: dict,
+) -> dict:
+    """Blender camera settings equivalent to this contract's projection.
+
+    This is the hinge of the whole actor path. `world_point_to_image` decides where an
+    actor's crop rectangle goes; Blender decides where the actor is actually drawn. If
+    the two cameras disagree by even a couple of degrees the actor lands outside its own
+    crop and the composite is empty. So both are derived from `camera_basis` here rather
+    than being configured independently.
+
+    Blender's camera looks down its local -Z with local +Y up. Rotating by `rx` about X
+    sends -Z to `(0, sin rx, -cos rx)`; matching that to the basis forward vector
+    `(0, cos p, -sin p)` gives `rx = 90 deg - p`, and the same rotation carries local +Y
+    onto the basis up vector, so the roll is fixed too.
+    """
+    basis = camera_basis(frame_width, frame_height, camera_contract)
+    downward_pitch = math.atan2(-basis["forward"][2], basis["forward"][1])
+    return {
+        "focal_length_mm": round(
+            CAMERA_SENSOR_WIDTH_MILLIMETERS / (2.0 * basis["horizontal_tangent"]), 6,
+        ),
+        "sensor_width_mm": CAMERA_SENSOR_WIDTH_MILLIMETERS,
+        "position": [float(value) for value in camera_contract["position"][:3]],
+        "rotation_degrees": [
+            round(90.0 - math.degrees(downward_pitch), 6), 0.0, 0.0,
+        ],
+    }
+
+
+def _dot(left: tuple[float, ...], right: tuple[float, ...]) -> float:
+    return sum(left[index] * right[index] for index in range(3))
 
 
 def _ground_ray(

@@ -27,10 +27,24 @@ def gap_cache_configuration(gap_configuration: dict) -> dict:
     }
 
 
+def shot_contract(shots: object) -> list[list[int]] | None:
+    """The shot structure a cached selection was placed against.
+
+    Gaps are positioned inside shots, so a re-analysis that finds a different set of
+    cuts invalidates the placement even when the video and the gap settings are
+    unchanged. None means no structure was supplied, which is how a video with no
+    detected cuts and a pre-shot-aware cache entry both read.
+    """
+    if not shots:
+        return None
+    return [[int(start), int(end)] for start, end in shots]
+
+
 def selection_cache_is_compatible(
     selection: object,
     video_metadata: dict,
     gap_configuration: dict,
+    shots: object = None,
 ) -> bool:
     if not isinstance(selection, dict) or not _selection_timeline_is_valid(
         selection, int(video_metadata["frames"]),
@@ -43,6 +57,7 @@ def selection_cache_is_compatible(
         },
         selection.get("source_video_contract") == source_video_contract(video_metadata),
         selection.get("gap_configuration") == gap_cache_configuration(gap_configuration),
+        selection.get("shot_contract") == shot_contract(shots),
     ))
 
 

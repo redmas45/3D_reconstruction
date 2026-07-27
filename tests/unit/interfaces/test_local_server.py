@@ -111,12 +111,12 @@ class LocalServerTests(unittest.TestCase):
         with urlopen(f"{self.base_url}/", timeout=REQUEST_TIMEOUT_SECONDS) as response:
             page_content = response.read()
             self.assertIn(b'id="theme-toggle"', page_content)
-            self.assertIn(b'id="renderer-mode"', page_content)
+            self.assertIn(b'id="start-button"', page_content)
         with urlopen(f"{self.base_url}/assets/styles/app.css", timeout=REQUEST_TIMEOUT_SECONDS) as response:
             self.assertIn(b'[data-theme="light"]', response.read())
         with urlopen(f"{self.base_url}/assets/scripts/api-client.js", timeout=REQUEST_TIMEOUT_SECONDS) as response:
             api_client_content = response.read()
-            self.assertIn(b'X-Renderer-Mode', api_client_content)
+            self.assertIn(b'X-File-Name', api_client_content)
             self.assertIn(b'cancelProcessingJob', api_client_content)
         with urlopen(f"{self.base_url}/assets/icons/favicon.svg", timeout=REQUEST_TIMEOUT_SECONDS) as response:
             self.assertEqual(200, response.status)

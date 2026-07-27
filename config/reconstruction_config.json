@@ -6,8 +6,12 @@
     "pose_confidence": 0.3,
     "pose_boundary_samples": 2,
     "frame_stride": 8,
-    "downscale_width": 960,
-    "confidence": 0.3,
+    "downscale_width": 0,
+    "inference_width": 1280,
+    "confidence": 0.2,
+    "iou": 0.7,
+    "max_detections": 600,
+    "augment": false,
     "tracker_config": "config/botsort_reid.yaml",
     "classes": {
       "0": "person",
@@ -102,7 +106,7 @@
     "context_seconds": 2.0
   },
   "scene": {
-    "max_render_entities": 3,
+    "max_render_entities": 16,
     "min_track_frames": 2,
     "track_interpolation_max_gap_multiplier": 4
   },
@@ -135,8 +139,9 @@
     "frame_stride": 12
   },
   "renderer": {
-    "default_mode": "blender",
     "blender_version": "4.5 LTS",
+    "render_mode": "actor_composite",
+    "actor_source": "observed_exemplar",
     "default_profile": "standard_forensic",
     "preview_scale_percent": 50,
     "production_scale_percent": 45,
@@ -147,7 +152,7 @@
     "maximum_render_long_edge": 1280,
     "hybrid_static_backplate": true,
     "production_hud_mode": "minimal",
-    "maximum_detailed_entities": 6,
+    "maximum_detailed_entities": 16,
     "maximum_gpu_workers": 1,
     "maximum_cpu_workers": 2,
     "checkpoint_frame_batch": 24,

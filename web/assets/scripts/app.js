@@ -49,7 +49,6 @@ const elements = {
   fileSize: requiredElement("#file-size"),
   clearFile: /** @type {HTMLButtonElement} */ (requiredElement("#clear-file")),
   startButton: /** @type {HTMLButtonElement} */ (requiredElement("#start-button")),
-  rendererMode: /** @type {HTMLSelectElement} */ (requiredElement("#renderer-mode")),
   uploadProgress: requiredElement("#upload-progress"),
   uploadPercentage: requiredElement("#upload-percentage"),
   uploadBar: /** @type {HTMLElement} */ (requiredElement("#upload-bar")),
@@ -149,8 +148,7 @@ async function uploadVideo() {
   resetUploadProgress();
   elements.uploadProgress.classList.remove("hidden");
   try {
-    const rendererMode = elements.rendererMode.value === "2d" ? "2d" : "blender";
-    const job = await uploadVideoJob(selectedVideo, rendererMode, (percentage) => {
+    const job = await uploadVideoJob(selectedVideo, (percentage) => {
       elements.uploadPercentage.textContent = `${percentage}%`;
       elements.uploadBar.style.width = `${percentage}%`;
     });
@@ -205,7 +203,6 @@ function createJobCard(job) {
   const stageLabel = outputIsMissing ? "Output unavailable" : (STAGE_LABELS[job.stage] || job.stage);
   titleRow.append(createElement("span", "stage-badge", stageLabel));
   main.append(titleRow);
-  main.append(createElement("span", "renderer-badge", job.renderer_mode === "blender" ? "Blender 3D" : "2.5D fallback"));
   const detail = outputIsMissing
     ? "Processing completed, but the output file is unavailable. Remove this record and run it again."
     : (job.error || job.detail);

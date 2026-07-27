@@ -19,6 +19,7 @@ from infrastructure.blender_runner import (
     BlenderRenderResult,
     render_with_blender,
 )
+from domain.shot_scene import combine_shot_motion, scene_report_for_shot
 from infrastructure.camera_motion_estimator import estimate_camera_motion
 from infrastructure.media_tools import (
     MediaProcessingError,
@@ -50,18 +51,33 @@ def prepare_blender_assets(
     maximum_entities: int,
     render_configuration: dict,
     cancellation_check: CancellationCheck | None = None,
+    shots: tuple[tuple[int, int], ...] = (),
 ) -> PreparedBlenderAssets:
     raise_if_cancelled(cancellation_check)
     validate_visible_evidence_only(scene_report)
-    motion_report = estimate_camera_motion(video_path, scene_report, cancellation_check)
-    calibrated_report = {**scene_report, "camera_motion_report": motion_report}
+    shot_bounds = _shot_bounds(shots, int(scene_report["video"]["frames"]))
+    scoped_reports, motion_by_shot = _calibrate_each_shot(
+        video_path, scene_report, shot_bounds, cancellation_check,
+    )
+    combined_motion = combine_shot_motion(motion_by_shot)
+    calibrated_report = {
+        **scene_report,
+        "camera_motion_report": combined_motion,
+        "camera_motion_by_shot": motion_by_shot,
+        "shots": [
+            {"index": index, "start": start, "end": end}
+            for index, (start, end) in enumerate(shot_bounds)
+        ],
+    }
     identity_registry = build_identity_registry(scene_report, video_path, cancellation_check)
     registry_path = work_directory / "entity_registry.json"
     write_identity_registry(identity_registry, registry_path)
-    _write_json(work_directory / "camera_motion_report.json", motion_report)
+    _write_json(work_directory / "camera_motion_report.json", combined_motion)
     plan_paths = _write_gap_plans(
         video_path,
         calibrated_report,
+        scoped_reports,
+        shot_bounds,
         identity_registry,
         hidden_ranges,
         work_directory,
@@ -70,6 +86,36 @@ def prepare_blender_assets(
         cancellation_check,
     )
     return PreparedBlenderAssets(calibrated_report, plan_paths, registry_path)
+
+
+def _shot_bounds(
+    shots: tuple[tuple[int, int], ...], frame_count: int,
+) -> list[tuple[int, int]]:
+    """A video with no reported cuts is one shot spanning it."""
+    return [(int(start), int(end)) for start, end in shots] or [(0, frame_count - 1)]
+
+
+def _calibrate_each_shot(
+    video_path: Path,
+    scene_report: dict,
+    shot_bounds: list[tuple[int, int]],
+    cancellation_check: CancellationCheck | None,
+) -> tuple[dict[int, dict], dict[int, dict]]:
+    """Measure the camera separately in every take.
+
+    Both the motion estimate and the ground fit derived from it describe one camera. Run
+    across a whole montage they describe the edit instead, which is how a calibration
+    can look confident and still place every actor in the wrong part of the frame.
+    """
+    scoped_reports: dict[int, dict] = {}
+    motion_by_shot: dict[int, dict] = {}
+    for shot_index, bounds in enumerate(shot_bounds):
+        raise_if_cancelled(cancellation_check)
+        scoped = scene_report_for_shot(scene_report, shot_index, bounds)
+        motion = estimate_camera_motion(video_path, scoped, cancellation_check)
+        motion_by_shot[shot_index] = motion
+        scoped_reports[shot_index] = {**scoped, "camera_motion_report": motion}
+    return scoped_reports, motion_by_shot
 
 
 def render_blender_gap(
@@ -117,9 +163,30 @@ def render_blender_gap(
     return output_path
 
 
+def _shot_for_gap(
+    shot_bounds: list[tuple[int, int]], hidden_range: tuple[int, int],
+) -> int:
+    """The take a gap sits in.
+
+    Gap selection places every gap wholly inside one shot. A selection restored from a
+    cache written before segmentation existed can still straddle a cut, so a gap that
+    matches no shot is attributed to the one holding its first frame rather than failing
+    the run.
+    """
+    for index, (start, end) in enumerate(shot_bounds):
+        if start <= hidden_range[0] and hidden_range[1] <= end:
+            return index
+    for index, (start, end) in enumerate(shot_bounds):
+        if start <= hidden_range[0] <= end:
+            return index
+    return 0
+
+
 def _write_gap_plans(
     video_path: Path,
     scene_report: dict,
+    scoped_reports: dict[int, dict],
+    shot_bounds: list[tuple[int, int]],
     identity_registry: dict,
     hidden_ranges: list[list[int]],
     work_directory: Path,
@@ -131,6 +198,10 @@ def _write_gap_plans(
     for gap_index, hidden_range_items in enumerate(hidden_ranges):
         raise_if_cancelled(cancellation_check)
         hidden_range = (int(hidden_range_items[0]), int(hidden_range_items[1]))
+        shot_index = _shot_for_gap(shot_bounds, hidden_range)
+        # The plan is built against the take the gap belongs to, so its camera is fitted
+        # to one camera and its entities are the ones actually present in that scene.
+        planning_report = scoped_reports.get(shot_index, scene_report)
         gap_directory = work_directory / "gaps" / f"gap_{gap_index:02d}" / "blender"
         context_path = export_forensic_context_frame(
             video_path,
@@ -147,7 +218,7 @@ def _write_gap_plans(
             cancellation_check,
         )
         plan = build_reconstruction_plan_v2(
-            scene_report,
+            planning_report,
             identity_registry,
             hidden_range,
             gap_index,
@@ -156,6 +227,7 @@ def _write_gap_plans(
             post_context_frame_path=post_context_path,
             render_configuration=render_configuration,
         )
+        plan["shot_index"] = shot_index
         plan_path = gap_directory / "plan_v2.json"
         write_reconstruction_plan_v2(plan, plan_path)
         plan_paths.append(plan_path)

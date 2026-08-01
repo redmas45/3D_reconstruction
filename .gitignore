@@ -1,27 +1,25 @@
-# Environments
+# Local credentials
 .env
 
-# Model weights
-*.pt
+# Runtime data, generated outputs, and uploaded videos
+backend/runtime/
 
-# Outputs and large video files
-outputs/
+# Local model weights
+backend/models/*.pt
 
-# Data and input videos
-data/
-
-# Python cache
+# Python caches
 __pycache__/
 *.pyc
+.pytest_cache/
 
-# Interface dependencies
-ui/node_modules/
-ui/dist/
-# Built artifact: rebuild with scripts/build_actor_library.py
-assets/actors/library.blend
-assets/actors/manifest.json
-# Blender writes a .blend1 backup beside every save
+# Inactive legacy interface dependencies
+backend/legacy/react-ui/node_modules/
+backend/legacy/react-ui/dist/
+
+# Built actor artifacts (the browser path does not require them)
+backend/assets/actors/library.blend
+backend/assets/actors/manifest.json
 *.blend1
-# Runtime job storage
-data/uploads/
-data/outputs/
+
+# Frontend package install (Three.js is vendored)
+frontend/node_modules/

@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Reconstruction dashboard — harness</title>
+  <link rel="stylesheet" href="/assets/styles/reconstruction.css">
+  <style>
+    body { margin: 0; background: #0b0e14; color: #e6edf3; font-family: system-ui, sans-serif; }
+    main { max-width: 960px; margin: 0 auto; padding: 24px; }
+    :root { --accent:#35c9d6; --muted:#8b98a9; --surface-2:rgba(255,255,255,0.04); --border:rgba(255,255,255,0.1); }
+  </style>
+</head>
+<body>
+  <main id="root"></main>
+  <script type="module">
+    import { createReconstructionDashboard } from "/assets/scripts/dashboard/reconstruction-dashboard.js";
+    import { parseSceneManifest } from "/assets/scripts/three/scene-manifest-loader.js";
+    const response = await fetch("/assets/fixtures/sample-scene.json", { cache: "no-store" });
+    const manifest = parseSceneManifest(await response.json());
+    const dashboard = createReconstructionDashboard(manifest, { sourceName: "demo_crossing.mp4" });
+    document.getElementById("root").append(dashboard.element);
+    window.__dashboard = dashboard;
+  </script>
+</body>
+</html>

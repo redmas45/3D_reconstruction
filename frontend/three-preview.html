@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Three.js reconstruction — renderer harness</title>
+  <style>
+    :root { color-scheme: dark; }
+    body { margin: 0; background: #0b0e14; color: #e6edf3; font-family: system-ui, sans-serif; }
+    header { padding: 12px 18px; border-bottom: 1px solid #1c2230; }
+    h1 { font-size: 15px; margin: 0; font-weight: 600; letter-spacing: 0.04em; }
+    #stage { width: 100vw; height: 78vh; background: #05070c; display: flex; align-items: center; justify-content: center; }
+    .three-canvas { display: block; }
+    #bar { display: flex; gap: 8px; padding: 12px 18px; flex-wrap: wrap; align-items: center; }
+    button { background: #16203a; color: #e6edf3; border: 1px solid #26324e; border-radius: 6px; padding: 7px 12px; cursor: pointer; font-size: 13px; }
+    button:hover { background: #1d2b4d; }
+    #status { font-size: 12px; color: #8b98a9; margin-left: auto; }
+    .three-fallback-notice { padding: 24px; text-align: center; }
+  </style>
+</head>
+<body>
+  <header><h1>THREE.JS RECONSTRUCTION — RENDERER HARNESS (demo fixture)</h1></header>
+  <div id="stage"></div>
+  <div id="bar">
+    <button id="play">Pause</button>
+    <button id="restart">Restart</button>
+    <button id="gap">Next gap</button>
+    <button id="uncertainty">Hide uncertainty</button>
+    <button id="debug">Debug grid</button>
+    <span id="status">loading…</span>
+  </div>
+  <script type="module">
+    import { ReconstructionView } from "./assets/scripts/three/three-reconstruction-view.js";
+    import { parseSceneManifest } from "./assets/scripts/three/scene-manifest-loader.js";
+
+    const stage = document.getElementById("stage");
+    const status = document.getElementById("status");
+    const view = new ReconstructionView(stage);
+    let manifest;
+    try {
+      const response = await fetch("./assets/fixtures/sample-scene.json", { cache: "no-store" });
+      manifest = parseSceneManifest(await response.json());
+      view.load(manifest);
+      status.textContent = view.isAvailable
+        ? `rendering ${manifest.gaps[0].entities.length} entities · gap 1/${manifest.gaps.length}`
+        : "WebGL unavailable";
+    } catch (error) {
+      status.textContent = "error: " + error.message;
+      throw error;
+    }
+
+    let gapIndex = 0;
+    let playing = true;
+    let showUncertainty = true;
+    let debug = false;
+    document.getElementById("play").addEventListener("click", (event) => {
+      playing = !playing;
+      if (playing) view.play(); else view.pause();
+      event.target.textContent = playing ? "Pause" : "Play";
+    });
+    document.getElementById("restart").addEventListener("click", () => view.restart());
+    document.getElementById("gap").addEventListener("click", () => {
+      gapIndex = (gapIndex + 1) % manifest.gaps.length;
+      view.selectGap(gapIndex);
+      status.textContent = `gap ${gapIndex + 1}/${manifest.gaps.length}`;
+    });
+    document.getElementById("uncertainty").addEventListener("click", (event) => {
+      showUncertainty = !showUncertainty;
+      view.setUncertainty(showUncertainty);
+      event.target.textContent = showUncertainty ? "Hide uncertainty" : "Show uncertainty";
+    });
+    document.getElementById("debug").addEventListener("click", (event) => {
+      debug = !debug;
+      view.setDebug(debug);
+      event.target.textContent = debug ? "Hide grid" : "Debug grid";
+    });
+    window.__view = view;
+  </script>
+</body>
+</html>

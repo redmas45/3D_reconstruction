@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Reconstruct missing video moments from visible evidence with an explainable browser-first 3D scene.">
+  <title>RECONSTRUCT | Evidence-to-scene video lab</title>
+  <link rel="icon" href="/assets/icons/favicon.svg" type="image/svg+xml">
+  <script src="/assets/scripts/theme-bootstrap.js"></script>
+  <link rel="stylesheet" href="/assets/styles/app.css">
+  <link rel="stylesheet" href="/assets/styles/evidence-summary.css">
+  <link rel="stylesheet" href="/assets/styles/presentation.css">
+  <link rel="stylesheet" href="/assets/styles/reconstruction.css">
+  <link rel="stylesheet" href="/assets/styles/professional.css">
+  <script src="/assets/scripts/app.js" type="module"></script>
+</head>
+<body>
+  <header class="site-header">
+    <a class="brand" href="/" aria-label="RECONSTRUCT home">
+      <span class="brand-mark" aria-hidden="true"><span></span><span></span><span></span></span>
+      <span class="brand-lockup"><strong>RECONSTRUCT</strong><small>evidence-to-scene lab</small></span>
+    </a>
+    <div class="header-actions">
+      <div class="system-status" id="system-status"><span class="status-dot"></span><span>Local engine ready</span></div>
+      <button class="theme-toggle" id="theme-toggle" type="button" aria-label="Switch theme" title="Switch theme">
+        <span class="theme-icon theme-sun" aria-hidden="true">&#9728;</span>
+        <span class="theme-icon theme-moon" aria-hidden="true">&#9790;</span>
+      </button>
+    </div>
+  </header>
+
+  <main>
+    <section class="hero" aria-labelledby="hero-title">
+      <div class="hero-copy">
+        <p class="eyebrow">VIDEO RECONSTRUCTION WORKSPACE</p>
+        <h1 id="hero-title">See the whole story, even where the video is missing.</h1>
+        <p class="hero-description">Upload one video. The original footage stays in place, and only the selected missing intervals are filled with a clear, animated 3D continuation.</p>
+        <div class="hero-facts" aria-label="Reconstruction policy">
+          <span><strong>75%</strong> visible evidence</span>
+          <span><strong>25%</strong> inferred intervals</span>
+          <span><strong>5-7 sec</strong> reviewable gaps</span>
+          <span><strong>Local</strong> source processing</span>
+        </div>
+      </div>
+      <aside class="hero-note">
+        <span class="hero-note-index">01 / THE SIMPLE VERSION</span>
+        <strong>One video. One timeline. Clear answers.</strong>
+        <p>Open the details when you need them; the main playback stays easy to understand.</p>
+      </aside>
+    </section>
+
+    <nav class="workflow-strip" aria-label="Reconstruction workflow">
+      <div class="workflow-step active"><span>01</span><div><strong>What we can see</strong><small>Visible footage and movement</small></div></div>
+      <span class="workflow-line" aria-hidden="true"></span>
+      <div class="workflow-step"><span>02</span><div><strong>What it suggests</strong><small>Clues from both boundaries</small></div></div>
+      <span class="workflow-line" aria-hidden="true"></span>
+      <div class="workflow-step"><span>03</span><div><strong>What fills the gap</strong><small>Animated 3D continuation</small></div></div>
+    </nav>
+
+    <section class="workspace-grid" aria-labelledby="upload-title">
+      <article class="panel upload-panel">
+        <div class="panel-heading">
+          <div><p class="section-number">START A RUN</p><h2 id="upload-title">Choose a video to reconstruct</h2></div>
+          <span class="local-badge"><span class="badge-dot"></span>Private on this device</span>
+        </div>
+        <div class="upload-workspace">
+          <label class="drop-zone" id="drop-zone" for="video-input">
+            <input id="video-input" type="file" accept=".mp4,.mov,.avi,.mkv,.m4v,.webm,.mpeg,.mpg,.wmv,video/*">
+            <span class="upload-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 16V4m0 0 4 4m-4-4L8 8M4 15v4a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-4"/></svg></span>
+            <strong>Drop a source video here</strong>
+            <span>or browse from your device</span>
+            <small>MP4, MOV, AVI, MKV, M4V, WebM, MPEG, MPG or WMV</small>
+          </label>
+          <div class="upload-controls">
+            <div class="selected-file hidden" id="selected-file">
+              <span class="file-type" id="file-type">MP4</span>
+              <div class="file-copy"><strong id="file-name"></strong><span id="file-size"></span></div>
+              <button class="icon-button" id="clear-file" type="button" aria-label="Clear selected video">&times;</button>
+            </div>
+            <div class="upload-progress hidden" id="upload-progress">
+              <div class="progress-meta"><span>Uploading source</span><strong id="upload-percentage">0%</strong></div>
+              <div class="progress-track"><span id="upload-bar"></span></div>
+            </div>
+            <div class="run-policy"><span class="policy-icon">~</span><div><strong>One controlled reconstruction</strong><small>Gaps total approximately 25%; the rest stays evidence.</small></div></div>
+            <button class="primary-button" id="start-button" type="button" disabled><span>Start reconstruction</span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 18 6-6-6-6"/></svg></button>
+            <p class="privacy-note">No cloud upload is required for the video. The Azure reasoning call receives structured visible clues only.</p>
+          </div>
+        </div>
+      </article>
+    </section>
+
+    <section class="section-block" aria-labelledby="processing-title">
+      <div class="section-heading"><div><p class="section-number">02 / LIVE RUN</p><h2 id="processing-title">Processing queue</h2></div><span class="section-note">One intensive job at a time</span></div>
+      <div class="job-list" id="job-list"></div>
+      <div class="empty-state" id="jobs-empty"><span class="empty-pulse"></span><strong>No active reconstructions</strong><p>Stage, progress, elapsed time, and live activity will appear here.</p></div>
+    </section>
+
+    <section class="section-block outputs-section" aria-labelledby="outputs-title">
+      <div class="section-heading"><div><p class="section-number">03 / REVIEW</p><h2 id="outputs-title">Your result</h2></div><span class="output-count" id="output-count">0 outputs</span></div>
+      <p class="section-intro">Play the complete timeline first. The short explanation underneath tells you what was observed, what was inferred, and where the 3D layer appears.</p>
+      <div class="output-grid" id="output-grid"></div>
+      <div class="empty-state output-empty" id="outputs-empty"><span class="empty-film" aria-hidden="true">&#9654;</span><strong>Completed scenes will appear here</strong><p>Each result is an explainable visualization, not recovered ground truth.</p></div>
+    </section>
+  </main>
+
+  <footer><span>AI-inferred visualization &middot; not recovered ground truth</span><span>RECONSTRUCT / local forensic workspace</span></footer>
+
+  <div class="modal-backdrop hidden" id="delete-modal" role="dialog" aria-modal="true" aria-labelledby="delete-title">
+    <div class="modal-card"><span class="danger-icon" aria-hidden="true">!</span><h2 id="delete-title">Delete this reconstruction?</h2><p>This permanently removes the output and its job-owned files from this computer.</p><div class="modal-actions"><button class="secondary-button" id="cancel-delete" type="button">Keep it</button><button class="danger-button" id="confirm-delete" type="button">Delete permanently</button></div></div>
+  </div>
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+</body>
+</html>

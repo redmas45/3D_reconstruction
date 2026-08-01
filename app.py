@@ -8,9 +8,10 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parent
-SRC = ROOT / "src"
-if str(SRC) not in sys.path:
-    sys.path.insert(0, str(SRC))
+BACKEND = ROOT / "backend"
+RUNTIME = BACKEND / "runtime"
+if str(BACKEND) not in sys.path:
+    sys.path.insert(0, str(BACKEND))
 
 from application.processing_jobs import JobManager
 from application.reconstruction_pipeline import load_config
@@ -50,7 +51,7 @@ def _arguments() -> argparse.Namespace:
 def main() -> None:
     args = _arguments()
     load_environment_file(ROOT / ".env")
-    output_root = ROOT / "outputs"
+    output_root = RUNTIME / "outputs"
     output_root.mkdir(parents=True, exist_ok=True)
     instance_lock = ApplicationInstanceLock(output_root / "server.lock")
     try:
@@ -66,12 +67,12 @@ def main() -> None:
     server = None
     try:
         manager = JobManager(
-            upload_root=ROOT / "data" / "uploads",
+            upload_root=RUNTIME / "data" / "uploads",
             output_root=output_root / "jobs",
             config_data=load_config(),
             legacy_output_root=output_root,
         )
-        server = build_server((args.host, args.port), manager, ROOT / "web")
+        server = build_server((args.host, args.port), manager, ROOT / "frontend")
         display_host = f"[{args.host}]" if ":" in args.host else args.host
         interface_url = f"http://{display_host}:{server.server_port}"
         print(f"\nForensic Reconstruction UI: {interface_url}")

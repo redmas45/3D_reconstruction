@@ -1,0 +1,704 @@
+{
+  "schema_version": 1,
+  "renderer": "threejs",
+  "evidence_disclosure": "Every figure and path shown is an inference bounded by the visible 75% of the video. This is a transparent hypothesis, not recovered ground truth.",
+  "world": {
+    "frame": "z_up_right_handed_metres",
+    "ground_plane_z": 0.0,
+    "units": "metres"
+  },
+  "source": {
+    "video_name": "demo_crossing.mp4",
+    "width": 1920,
+    "height": 1080,
+    "fps": 30.0,
+    "frame_count": 1800,
+    "duration_seconds": 60.0,
+    "observed_fraction": 0.75,
+    "reconstructed_fraction": 0.25
+  },
+  "camera_default": {
+    "projection_model": "pinhole_ground_plane_v2",
+    "position": [
+      0.0,
+      -3.0,
+      1.6
+    ],
+    "look_at": [
+      0.0,
+      8.0,
+      1.0
+    ],
+    "field_of_view_degrees": 58.0,
+    "field_of_view_axis": "horizontal",
+    "horizon_normalized_y": 0.46,
+    "focal_length_mm": 33.0,
+    "motion_model": "static_camera",
+    "presentation_mode": "source_camera_aligned",
+    "calibration_confidence": 0.8,
+    "motion_warning": ""
+  },
+  "narrative": {
+    "headline": "Four tracked subjects continue across the crossing",
+    "whole_video_summary": "Three pedestrians and one car were tracked on both sides of the interval and their motion was continued from the last observed heading.",
+    "confidence": 0.72,
+    "causal_link_supported": false,
+    "planning_mode": "azure",
+    "unknowns": [
+      "Exact pace inside the interval",
+      "Whether the car yielded"
+    ],
+    "story_points": [
+      "Every subject was seen entering and leaving the gap."
+    ]
+  },
+  "clues": [
+    {
+      "id": "scene_tracks",
+      "category": "entity_inventory",
+      "statement": "Four subjects tracked continuously",
+      "confidence": 0.9
+    },
+    {
+      "id": "scene_camera",
+      "category": "camera",
+      "statement": "Camera is static and well calibrated",
+      "confidence": 0.82
+    }
+  ],
+  "gaps": [
+    {
+      "gap_id": "gap_00",
+      "gap_index": 0,
+      "start_frame": 300,
+      "end_frame": 450,
+      "start_seconds": 10.0,
+      "end_seconds": 15.033,
+      "duration_seconds": 5.033,
+      "confidence": 0.72,
+      "calibration_confidence": 0.8,
+      "camera": {
+        "projection_model": "pinhole_ground_plane_v2",
+        "position": [
+          0.0,
+          -3.0,
+          1.6
+        ],
+        "look_at": [
+          0.0,
+          8.0,
+          1.0
+        ],
+        "field_of_view_degrees": 58.0,
+        "field_of_view_axis": "horizontal",
+        "horizon_normalized_y": 0.46,
+        "focal_length_mm": 33.0,
+        "motion_model": "static_camera",
+        "presentation_mode": "source_camera_aligned",
+        "calibration_confidence": 0.8,
+        "motion_warning": ""
+      },
+      "environment": {
+        "style": "forensic_3d",
+        "ground_color": [
+          0.05,
+          0.06,
+          0.09
+        ],
+        "grid_color": [
+          0.05,
+          0.62,
+          0.68
+        ],
+        "backplate_frame": 298,
+        "has_backplate": true,
+        "backplate_reason": "static_camera_visible_evidence"
+      },
+      "narrative": {
+        "before_observed": "Subjects moving north across the crossing.",
+        "inside_inferred": "Motion continued along measured headings.",
+        "after_observed": "Subjects reappear consistent with the inferred paths.",
+        "unknowns": [
+          "Exact pace"
+        ]
+      },
+      "decision": {
+        "gap_summary": "Continue measured motion for all subjects.",
+        "confidence": 0.72,
+        "evidence_references": [
+          "track:7:pre_boundary",
+          "scene:camera_motion_report"
+        ],
+        "unknowns": [
+          "Exact pace"
+        ],
+        "event_beats": [
+          {
+            "time_fraction": 0.5,
+            "action": "continue",
+            "entity_ids": [
+              "7",
+              "11",
+              "14",
+              "22"
+            ]
+          }
+        ]
+      },
+      "clues": [
+        {
+          "id": "scene_tracks"
+        },
+        {
+          "id": "scene_camera"
+        }
+      ],
+      "entities": [
+        {
+          "track_id": "7",
+          "class_name": "person",
+          "category": "person",
+          "lifecycle": "continuous",
+          "confidence": 0.86,
+          "visual_fidelity_tier": "supported",
+          "appearance_seed": 55,
+          "appearance": {
+            "upper_color": [
+              0.2,
+              0.52,
+              0.62
+            ],
+            "lower_color": [
+              0.12,
+              0.14,
+              0.2
+            ],
+            "vehicle_color": [
+              0.2,
+              0.52,
+              0.62
+            ],
+            "source": "visible_evidence"
+          },
+          "body_proportions": {
+            "height_scale": 0.98,
+            "shoulder_scale": 0.9,
+            "limb_scale": 1.0
+          },
+          "proxy": {
+            "type": "humanoid",
+            "dimensions_metres": [
+              0.5,
+              0.34,
+              1.75
+            ],
+            "ground_offset_metres": 0.0
+          },
+          "start_state": {
+            "frame": 299,
+            "world": [
+              -2.5,
+              3.0,
+              0.0
+            ],
+            "heading_degrees": 19.103
+          },
+          "end_state": {
+            "frame": 451,
+            "world": [
+              -2.5,
+              12.0,
+              0.0
+            ],
+            "heading_degrees": 340.897
+          },
+          "waypoints": [
+            {
+              "role": "start",
+              "frame": 299,
+              "time_fraction": 0.0,
+              "world": [
+                -2.5,
+                3.0,
+                0.0
+              ],
+              "heading_degrees": 19.103
+            },
+            {
+              "role": "inferred_01",
+              "frame": 349,
+              "time_fraction": 0.32895,
+              "world": [
+                -1.461,
+                6.0,
+                0.0
+              ],
+              "heading_degrees": 0.0
+            },
+            {
+              "role": "inferred_02",
+              "frame": 400,
+              "time_fraction": 0.66447,
+              "world": [
+                -1.461,
+                9.0,
+                0.0
+              ],
+              "heading_degrees": 340.897
+            },
+            {
+              "role": "predicted_end",
+              "frame": 451,
+              "time_fraction": 1.0,
+              "world": [
+                -2.5,
+                12.0,
+                0.0
+              ],
+              "heading_degrees": 340.897
+            }
+          ],
+          "motion_profile": {
+            "clip": "walk",
+            "phase_offset": 0.92,
+            "cadence_scale": 1.05,
+            "blend_seconds": 0.18,
+            "pose_confidence": 0.6,
+            "speed_meters_per_second": 1.4
+          },
+          "kinematics": {
+            "duration_seconds": 5.0,
+            "maximum_speed_meters_per_second": 3.0,
+            "maximum_turn_rate_degrees_per_second": 120.0
+          },
+          "occlusion_state": "visible_throughout",
+          "selected_hypothesis": {
+            "id": "gap_00_7_continue_measured_motion",
+            "type": "continue_measured_motion",
+            "action": "walk"
+          },
+          "rejected_hypotheses": [
+            {
+              "id": "gap_00_7_hold_position",
+              "reason": "Subject was clearly moving before the gap."
+            }
+          ],
+          "decision_summary": "Measured motion is the best-supported continuation.",
+          "uncertainty": {
+            "position_radius_metres": 0.496,
+            "alternative_paths": 0,
+            "heading_disagreement_degrees": 8.0
+          }
+        },
+        {
+          "track_id": "11",
+          "class_name": "person",
+          "category": "person",
+          "lifecycle": "continuous",
+          "confidence": 0.63,
+          "visual_fidelity_tier": "plausible",
+          "appearance_seed": 6468,
+          "appearance": {
+            "upper_color": [
+              0.7,
+              0.42,
+              0.2
+            ],
+            "lower_color": [
+              0.15,
+              0.16,
+              0.18
+            ],
+            "vehicle_color": [
+              0.7,
+              0.42,
+              0.2
+            ],
+            "source": "visible_evidence"
+          },
+          "body_proportions": {
+            "height_scale": 1.01,
+            "shoulder_scale": 0.975,
+            "limb_scale": 1.0
+          },
+          "proxy": {
+            "type": "humanoid",
+            "dimensions_metres": [
+              0.5,
+              0.34,
+              1.75
+            ],
+            "ground_offset_metres": 0.0
+          },
+          "start_state": {
+            "frame": 299,
+            "world": [
+              0.4,
+              3.0,
+              0.0
+            ],
+            "heading_degrees": 346.993
+          },
+          "end_state": {
+            "frame": 451,
+            "world": [
+              0.4,
+              12.0,
+              0.0
+            ],
+            "heading_degrees": 13.007
+          },
+          "waypoints": [
+            {
+              "role": "start",
+              "frame": 299,
+              "time_fraction": 0.0,
+              "world": [
+                0.4,
+                3.0,
+                0.0
+              ],
+              "heading_degrees": 346.993
+            },
+            {
+              "role": "inferred_01",
+              "frame": 349,
+              "time_fraction": 0.32895,
+              "world": [
+                -0.293,
+                6.0,
+                0.0
+              ],
+              "heading_degrees": 0.0
+            },
+            {
+              "role": "inferred_02",
+              "frame": 400,
+              "time_fraction": 0.66447,
+              "world": [
+                -0.293,
+                9.0,
+                0.0
+              ],
+              "heading_degrees": 13.007
+            },
+            {
+              "role": "predicted_end",
+              "frame": 451,
+              "time_fraction": 1.0,
+              "world": [
+                0.4,
+                12.0,
+                0.0
+              ],
+              "heading_degrees": 13.007
+            }
+          ],
+          "motion_profile": {
+            "clip": "walk",
+            "phase_offset": 0.43,
+            "cadence_scale": 1.05,
+            "blend_seconds": 0.18,
+            "pose_confidence": 0.6,
+            "speed_meters_per_second": 1.1
+          },
+          "kinematics": {
+            "duration_seconds": 5.0,
+            "maximum_speed_meters_per_second": 3.0,
+            "maximum_turn_rate_degrees_per_second": 120.0
+          },
+          "occlusion_state": "visible_throughout",
+          "selected_hypothesis": {
+            "id": "gap_00_11_continue_measured_motion",
+            "type": "continue_measured_motion",
+            "action": "walk"
+          },
+          "rejected_hypotheses": [
+            {
+              "id": "gap_00_11_hold_position",
+              "reason": "Subject was clearly moving before the gap."
+            }
+          ],
+          "decision_summary": "Measured motion is the best-supported continuation.",
+          "uncertainty": {
+            "position_radius_metres": 0.818,
+            "alternative_paths": 2,
+            "heading_disagreement_degrees": 74.0
+          }
+        },
+        {
+          "track_id": "14",
+          "class_name": "person",
+          "category": "person",
+          "lifecycle": "continuous",
+          "confidence": 0.38,
+          "visual_fidelity_tier": "weak",
+          "appearance_seed": 6471,
+          "appearance": {
+            "upper_color": [
+              0.45,
+              0.45,
+              0.5
+            ],
+            "lower_color": [
+              0.2,
+              0.2,
+              0.22
+            ],
+            "vehicle_color": [
+              0.45,
+              0.45,
+              0.5
+            ],
+            "source": "visible_evidence"
+          },
+          "body_proportions": {
+            "height_scale": 0.94,
+            "shoulder_scale": 1.0,
+            "limb_scale": 1.0
+          },
+          "proxy": {
+            "type": "humanoid",
+            "dimensions_metres": [
+              0.5,
+              0.34,
+              1.75
+            ],
+            "ground_offset_metres": 0.0
+          },
+          "start_state": {
+            "frame": 299,
+            "world": [
+              2.8,
+              3.0,
+              0.0
+            ],
+            "heading_degrees": 29.999
+          },
+          "end_state": {
+            "frame": 451,
+            "world": [
+              2.8,
+              12.0,
+              0.0
+            ],
+            "heading_degrees": 330.001
+          },
+          "waypoints": [
+            {
+              "role": "start",
+              "frame": 299,
+              "time_fraction": 0.0,
+              "world": [
+                2.8,
+                3.0,
+                0.0
+              ],
+              "heading_degrees": 29.999
+            },
+            {
+              "role": "inferred_01",
+              "frame": 349,
+              "time_fraction": 0.32895,
+              "world": [
+                4.532,
+                6.0,
+                0.0
+              ],
+              "heading_degrees": 0.0
+            },
+            {
+              "role": "inferred_02",
+              "frame": 400,
+              "time_fraction": 0.66447,
+              "world": [
+                4.532,
+                9.0,
+                0.0
+              ],
+              "heading_degrees": 330.001
+            },
+            {
+              "role": "predicted_end",
+              "frame": 451,
+              "time_fraction": 1.0,
+              "world": [
+                2.8,
+                12.0,
+                0.0
+              ],
+              "heading_degrees": 330.001
+            }
+          ],
+          "motion_profile": {
+            "clip": "walk",
+            "phase_offset": 0.92,
+            "cadence_scale": 1.05,
+            "blend_seconds": 0.18,
+            "pose_confidence": 0.6,
+            "speed_meters_per_second": 0.9
+          },
+          "kinematics": {
+            "duration_seconds": 5.0,
+            "maximum_speed_meters_per_second": 3.0,
+            "maximum_turn_rate_degrees_per_second": 120.0
+          },
+          "occlusion_state": "visible_throughout",
+          "selected_hypothesis": {
+            "id": "gap_00_14_continue_measured_motion",
+            "type": "continue_measured_motion",
+            "action": "walk"
+          },
+          "rejected_hypotheses": [
+            {
+              "id": "gap_00_14_hold_position",
+              "reason": "Subject was clearly moving before the gap."
+            }
+          ],
+          "decision_summary": "Measured motion is the best-supported continuation.",
+          "uncertainty": {
+            "position_radius_metres": 1.168,
+            "alternative_paths": 2,
+            "heading_disagreement_degrees": 74.0
+          }
+        },
+        {
+          "track_id": "22",
+          "class_name": "car",
+          "category": "vehicle",
+          "lifecycle": "continuous",
+          "confidence": 0.79,
+          "visual_fidelity_tier": "supported",
+          "appearance_seed": 6600,
+          "appearance": {
+            "upper_color": [
+              0.5,
+              0.1,
+              0.12
+            ],
+            "lower_color": [
+              0.1,
+              0.1,
+              0.1
+            ],
+            "vehicle_color": [
+              0.6,
+              0.15,
+              0.15
+            ],
+            "source": "visible_evidence"
+          },
+          "body_proportions": {
+            "height_scale": 0.98,
+            "shoulder_scale": 0.9,
+            "limb_scale": 1.0
+          },
+          "proxy": {
+            "type": "vehicle",
+            "dimensions_metres": [
+              4.3,
+              1.8,
+              1.45
+            ],
+            "ground_offset_metres": 0.0
+          },
+          "start_state": {
+            "frame": 299,
+            "world": [
+              -1.0,
+              2.5,
+              0.0
+            ],
+            "heading_degrees": 9.834
+          },
+          "end_state": {
+            "frame": 451,
+            "world": [
+              -1.0,
+              11.5,
+              0.0
+            ],
+            "heading_degrees": 350.166
+          },
+          "waypoints": [
+            {
+              "role": "start",
+              "frame": 299,
+              "time_fraction": 0.0,
+              "world": [
+                -1.0,
+                2.5,
+                0.0
+              ],
+              "heading_degrees": 9.834
+            },
+            {
+              "role": "inferred_01",
+              "frame": 349,
+              "time_fraction": 0.32895,
+              "world": [
+                -0.48,
+                5.5,
+                0.0
+              ],
+              "heading_degrees": 0.0
+            },
+            {
+              "role": "inferred_02",
+              "frame": 400,
+              "time_fraction": 0.66447,
+              "world": [
+                -0.48,
+                8.5,
+                0.0
+              ],
+              "heading_degrees": 350.166
+            },
+            {
+              "role": "predicted_end",
+              "frame": 451,
+              "time_fraction": 1.0,
+              "world": [
+                -1.0,
+                11.5,
+                0.0
+              ],
+              "heading_degrees": 350.166
+            }
+          ],
+          "motion_profile": {
+            "clip": "walk",
+            "phase_offset": 0.0,
+            "cadence_scale": 1.0,
+            "blend_seconds": 0.18,
+            "pose_confidence": 0.0,
+            "speed_meters_per_second": 8.0
+          },
+          "kinematics": {
+            "duration_seconds": 5.0,
+            "maximum_speed_meters_per_second": 35.0,
+            "maximum_turn_rate_degrees_per_second": 120.0
+          },
+          "occlusion_state": "visible_throughout",
+          "selected_hypothesis": {
+            "id": "gap_00_22_continue_measured_motion",
+            "type": "continue_measured_motion",
+            "action": "drive"
+          },
+          "rejected_hypotheses": [
+            {
+              "id": "gap_00_22_hold_position",
+              "reason": "Subject was clearly moving before the gap."
+            }
+          ],
+          "decision_summary": "Measured motion is the best-supported continuation.",
+          "uncertainty": {
+            "position_radius_metres": 0.594,
+            "alternative_paths": 0,
+            "heading_disagreement_degrees": 8.0
+          }
+        }
+      ]
+    }
+  ]
+}

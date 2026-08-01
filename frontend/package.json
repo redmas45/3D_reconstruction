@@ -1,0 +1,13 @@
+{
+  "name": "reconstruct-frontend",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Browser-first Three.js renderer for evidence-grounded video reconstruction. Vendored, no runtime CDN.",
+  "type": "module",
+  "scripts": {
+    "check": "node --check assets/scripts/app.js"
+  },
+  "dependencies": {
+    "three": "0.169.0"
+  }
+}
